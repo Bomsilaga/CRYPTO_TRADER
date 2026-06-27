@@ -21,3 +21,9 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Build artifacts
+tsconfig.tsbuildinfo
+
+# Extracted zip contents
+boma-scan-fixed/
