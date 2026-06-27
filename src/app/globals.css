@@ -1,0 +1,35 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #0a0a0f;
+  --surface: #111118;
+  --border: #1e1e2e;
+  --text: #e2e8f0;
+  --muted: #64748b;
+  --green: #22c55e;
+  --red: #ef4444;
+  --yellow: #eab308;
+  --blue: #3b82f6;
+  --accent: #6366f1;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', ui-monospace, monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100dvh;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+input, select, button {
+  font-family: inherit;
+  font-size: inherit;
+}
