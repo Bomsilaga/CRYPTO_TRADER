@@ -314,31 +314,20 @@ function getBtcVerdict(signal: ScanResult, btc: ScanResult, divs: string[]): Btc
 
 /* ─── Constants ──────────────────────────────────────────────────────────── */
 
-const POPULAR = [
-  // ── Core L1s ──────────────────────────────────────────────────────────
-  'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT',
-  'DOTUSDT', 'ATOMUSDT', 'TRXUSDT', 'ICPUSDT', 'XLMUSDT', 'HBARUSDT',
-  // ── Memes (Bybit 1000× prefix for sub-cent tokens) ────────────────────
-  'DOGEUSDT', '1000PEPEUSDT', 'WIFUSDT', '1000FLOKIUSDT', '1000BONKUSDT',
-  // ── L2 / rollups (MATIC → POL) ────────────────────────────────────────
-  'ARBUSDT', 'OPUSDT', 'STRKUSDT', 'POLUSDT', 'MNTUSDT',
-  // ── Move / new L1 ─────────────────────────────────────────────────────
-  'SUIUSDT', 'APTUSDT', 'SEIUSDT',
-  // ── Cosmos / interchain ───────────────────────────────────────────────
-  'INJUSDT', 'TIAUSDT', 'NEARUSDT', 'RUNEUSDT',
-  // ── DeFi blue chips ───────────────────────────────────────────────────
-  'LINKUSDT', 'AAVEUSDT', 'UNIUSDT', 'LDOUSDT', 'CRVUSDT', 'PENDLEUSDT', 'GRTUSDT',
-  // ── AI / infra ────────────────────────────────────────────────────────
-  'TAOUSDT', 'RENDERUSDT', 'WLDUSDT',
-  // ── Solana ecosystem ──────────────────────────────────────────────────
-  'JUPUSDT', 'PYTHUSDT', 'JTOUSDT',
-  // ── Bitcoin L2 / ecosystem ────────────────────────────────────────────
-  'ORDIUSDT', 'STXUSDT', 'LTCUSDT',
-  // ── Gaming / metaverse ────────────────────────────────────────────────
-  'SANDUSDT', 'AXSUSDT', 'GALAUSDT', 'MANAUSDT', 'APEUSDT',
-  // ── Established alts ──────────────────────────────────────────────────
-  'ENAUSDT', 'FILUSDT', 'ALGOUSDT', 'VETUSDT',
+const GROUPS: { label: string; symbols: string[] }[] = [
+  { label: 'Core L1',       symbols: ['ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT','ADAUSDT','AVAXUSDT','DOTUSDT','ATOMUSDT','TRXUSDT','ICPUSDT','XLMUSDT','HBARUSDT'] },
+  { label: 'Memes',         symbols: ['DOGEUSDT','1000PEPEUSDT','WIFUSDT','1000FLOKIUSDT','1000BONKUSDT'] },
+  { label: 'L2 / Rollups',  symbols: ['ARBUSDT','OPUSDT','STRKUSDT','POLUSDT','MNTUSDT'] },
+  { label: 'Move / New L1', symbols: ['SUIUSDT','APTUSDT','SEIUSDT'] },
+  { label: 'Cosmos',        symbols: ['INJUSDT','TIAUSDT','NEARUSDT','RUNEUSDT'] },
+  { label: 'DeFi',          symbols: ['LINKUSDT','AAVEUSDT','UNIUSDT','LDOUSDT','CRVUSDT','PENDLEUSDT','GRTUSDT'] },
+  { label: 'AI / Infra',    symbols: ['TAOUSDT','RENDERUSDT','WLDUSDT'] },
+  { label: 'Solana',        symbols: ['JUPUSDT','PYTHUSDT','JTOUSDT'] },
+  { label: 'BTC Ecosystem', symbols: ['ORDIUSDT','STXUSDT','LTCUSDT'] },
+  { label: 'Gaming',        symbols: ['SANDUSDT','AXSUSDT','GALAUSDT','MANAUSDT','APEUSDT'] },
+  { label: 'Other',         symbols: ['ENAUSDT','FILUSDT','ALGOUSDT','VETUSDT'] },
 ];
+const POPULAR = GROUPS.flatMap(g => g.symbols);
 
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
 
@@ -387,6 +376,7 @@ export default function Home() {
   const [marketOv, setMarketOv] = useState<Record<string, { score: number; direction: string; confidence: number }>>({});
   const [marketScanning, setMarketScanning] = useState(false);
   const [marketProgress, setMarketProgress] = useState(0);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // Settings state
   const [apiKey, setApiKey] = useState('');
@@ -775,81 +765,125 @@ export default function Home() {
               </button>
             </div>
 
-            {/* Market overview header */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 12, color: '#475569' }}>
+            {/* Market overview: grouped, collapsible, sortable */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+              <span style={{ fontSize: 11, color: '#334155' }}>
                 {marketScanning
-                  ? `Scanning… ${marketProgress}/${POPULAR.length}`
+                  ? `Scanning ${marketProgress} / ${POPULAR.length}…`
                   : Object.keys(marketOv).length > 0
-                    ? `${Object.keys(marketOv).length} pairs · click to analyse`
-                    : 'Quick pick or scan all for scores'}
+                    ? `${Object.keys(marketOv).length} pairs scored · tap group to expand`
+                    : 'Tap group to expand · scan all for scores'}
               </span>
               <button
                 onClick={marketScanning ? undefined : scanMarket}
                 disabled={marketScanning}
                 style={{
-                  padding: '5px 14px', background: marketScanning ? '#1e1e2e' : '#0f172a',
-                  border: '1px solid #334155', borderRadius: 6, color: marketScanning ? '#475569' : '#94a3b8',
-                  cursor: marketScanning ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
+                  padding: '4px 12px', background: '#0f172a',
+                  border: '1px solid #334155', borderRadius: 6,
+                  color: marketScanning ? '#475569' : '#94a3b8',
+                  cursor: marketScanning ? 'not-allowed' : 'pointer', fontSize: 11, fontWeight: 600,
                 }}
               >
-                {marketScanning ? `Scanning ${marketProgress}/${POPULAR.length}…` : '⚡ Scan All Pairs'}
+                {marketScanning ? `${marketProgress}/${POPULAR.length}…` : '⚡ Scan All'}
               </button>
             </div>
 
-            {/* Scored 3-column grid (shown after scan) or flat chip fallback */}
-            {Object.keys(marketOv).length > 0 ? (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
-                {POPULAR.map(s => {
-                  const ov = marketOv[s];
-                  const label = s.replace('1000', '').replace('USDT', '');
-                  const dir = ov?.direction ?? null;
-                  const score = ov?.score ?? null;
-                  const active = symbol === s;
-                  const dirColor = dir === 'LONG' ? '#22c55e' : dir === 'SHORT' ? '#ef4444' : '#64748b';
-                  const scoreColor = score === null ? '#334155' : score >= 80 ? '#22c55e' : score >= 65 ? '#eab308' : '#64748b';
-                  return (
-                    <button key={s} onClick={() => { setSymbol(s); scan(s); }} style={{
-                      padding: '8px 10px', textAlign: 'left',
-                      background: active ? '#1e1b4b' : ov ? `${dirColor}0a` : '#0a0a0f',
-                      border: `1px solid ${active ? '#6366f1' : ov ? `${dirColor}33` : '#1e1e2e'}`,
-                      borderRadius: 7, cursor: 'pointer',
-                    }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: active ? '#818cf8' : '#94a3b8' }}>{label}</span>
-                        {score !== null && (
-                          <span style={{ fontSize: 14, fontWeight: 800, color: scoreColor }}>{score}</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {GROUPS.map(group => {
+                const isExpanded = expandedGroups.has(group.label);
+                const scanned = Object.keys(marketOv).length > 0;
+
+                // Best score + direction in this group
+                const scored = group.symbols
+                  .map(s => ({ s, ov: marketOv[s] }))
+                  .filter(x => x.ov)
+                  .sort((a, b) => b.ov.score - a.ov.score);
+                const best = scored[0]?.ov;
+                const bestDir = best?.direction;
+                const bestScore = best?.score ?? null;
+                const dirColor = bestDir === 'LONG' ? '#22c55e' : bestDir === 'SHORT' ? '#ef4444' : '#64748b';
+                const scoreColor = bestScore === null ? '#475569' : bestScore >= 80 ? '#22c55e' : bestScore >= 65 ? '#eab308' : '#64748b';
+
+                // Sort symbols by score desc within expanded group
+                const sorted = isExpanded
+                  ? [...group.symbols].sort((a, b) => (marketOv[b]?.score ?? 0) - (marketOv[a]?.score ?? 0))
+                  : group.symbols;
+
+                return (
+                  <div key={group.label} style={{ border: '1px solid #1e1e2e', borderRadius: 8, overflow: 'hidden' }}>
+                    {/* Group header — click to toggle */}
+                    <button
+                      onClick={() => setExpandedGroups(prev => {
+                        const next = new Set(prev);
+                        if (next.has(group.label)) next.delete(group.label); else next.add(group.label);
+                        return next;
+                      })}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '7px 10px', background: isExpanded ? '#111118' : '#0a0a0f',
+                        border: 'none', cursor: 'pointer', gap: 8,
+                      }}
+                    >
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '0.05em' }}>
+                        {group.label}
+                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+                        {scanned && bestScore !== null && (
+                          <>
+                            <span style={{ fontSize: 11, fontWeight: 800, color: scoreColor }}>{bestScore}</span>
+                            {bestDir && bestDir !== 'NEUTRAL' && (
+                              <span style={{ fontSize: 10, color: dirColor, fontWeight: 700 }}>
+                                {bestDir === 'LONG' ? '▲' : '▼'} {bestDir}
+                              </span>
+                            )}
+                          </>
                         )}
-                        {!ov && marketScanning && (
+                        {marketScanning && !scanned && (
                           <span style={{ fontSize: 10, color: '#334155' }}>…</span>
                         )}
+                        <span style={{ fontSize: 10, color: '#334155' }}>{group.symbols.length}</span>
+                        <span style={{ fontSize: 10, color: '#334155' }}>{isExpanded ? '▲' : '▼'}</span>
                       </div>
-                      {dir && dir !== 'NEUTRAL' && (
-                        <div style={{ fontSize: 10, color: dirColor, fontWeight: 600, marginTop: 2 }}>
-                          {dir === 'LONG' ? '▲' : '▼'} {dir}
-                        </div>
-                      )}
-                      {dir === 'NEUTRAL' && (
-                        <div style={{ fontSize: 10, color: '#334155', marginTop: 2 }}>— NEUTRAL</div>
-                      )}
                     </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                {POPULAR.map(s => (
-                  <button key={s} onClick={() => { setSymbol(s); scan(s); }} style={{
-                    padding: '5px 10px', background: symbol === s ? '#1e1b4b' : '#111118',
-                    border: `1px solid ${symbol === s ? '#6366f1' : '#1e1e2e'}`,
-                    borderRadius: 6, color: symbol === s ? '#818cf8' : '#64748b',
-                    cursor: 'pointer', fontSize: 12, fontWeight: symbol === s ? 700 : 400,
-                  }}>
-                    {s.replace('1000', '').replace('USDT', '')}
-                  </button>
-                ))}
-              </div>
-            )}
+
+                    {/* Expanded: 3-column scored grid */}
+                    {isExpanded && (
+                      <div style={{ padding: '6px 6px 6px', background: '#080810', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 5 }}>
+                        {sorted.map(s => {
+                          const ov = marketOv[s];
+                          const lbl = s.replace('1000', '').replace('USDT', '');
+                          const dir = ov?.direction ?? null;
+                          const score = ov?.score ?? null;
+                          const active = symbol === s;
+                          const dc = dir === 'LONG' ? '#22c55e' : dir === 'SHORT' ? '#ef4444' : '#475569';
+                          const sc = score === null ? '#334155' : score >= 80 ? '#22c55e' : score >= 65 ? '#eab308' : '#64748b';
+                          return (
+                            <button key={s} onClick={() => { setSymbol(s); scan(s); }} style={{
+                              padding: '7px 8px', textAlign: 'left',
+                              background: active ? '#1e1b4b' : ov ? `${dc}0d` : '#0a0a0f',
+                              border: `1px solid ${active ? '#6366f1' : ov ? `${dc}33` : '#1a1a2e'}`,
+                              borderRadius: 6, cursor: 'pointer',
+                            }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: active ? '#818cf8' : '#94a3b8' }}>{lbl}</span>
+                                {score !== null
+                                  ? <span style={{ fontSize: 13, fontWeight: 800, color: sc }}>{score}</span>
+                                  : marketScanning ? <span style={{ fontSize: 10, color: '#1e1e2e' }}>…</span> : null}
+                              </div>
+                              {dir && dir !== 'NEUTRAL' && (
+                                <div style={{ fontSize: 9, color: dc, fontWeight: 600, marginTop: 1 }}>
+                                  {dir === 'LONG' ? '▲' : '▼'} {dir}
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
             {/* Autoscan panel */}
             <div style={{ padding: 14, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
