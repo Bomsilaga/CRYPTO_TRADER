@@ -319,8 +319,7 @@ const POPULAR = [
   'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT',
   'DOTUSDT', 'ATOMUSDT', 'TRXUSDT', 'ICPUSDT', 'XLMUSDT', 'HBARUSDT',
   // ── Memes (Bybit 1000× prefix for sub-cent tokens) ────────────────────
-  'DOGEUSDT', '1000SHIBUSDT', '1000PEPEUSDT', 'WIFUSDT',
-  '1000BOMEUSDT', '1000FLOKIUSDT', '1000BONKUSDT',
+  'DOGEUSDT', '1000PEPEUSDT', 'WIFUSDT', '1000FLOKIUSDT', '1000BONKUSDT',
   // ── L2 / rollups (MATIC → POL) ────────────────────────────────────────
   'ARBUSDT', 'OPUSDT', 'STRKUSDT', 'POLUSDT', 'MNTUSDT',
   // ── Move / new L1 ─────────────────────────────────────────────────────
