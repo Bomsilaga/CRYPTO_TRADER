@@ -748,7 +748,7 @@ export default function Home() {
               <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
                 {(['Paper', 'Live'] as const).map(mode => (
                   <button key={mode} onClick={() => setLiveMode(mode === 'Live')} style={{
-                    flex: 1, padding: '12px 0', border: 'none', cursor: 'pointer',
+                    flex: 1, padding: '12px 0', cursor: 'pointer',
                     fontWeight: 700, fontSize: 14, borderRadius: 8,
                     background: (liveMode ? 'Live' : 'Paper') === mode
                       ? mode === 'Live' ? '#dc2626' : '#16a34a'
