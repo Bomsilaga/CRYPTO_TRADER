@@ -267,16 +267,16 @@ function detectBtcDivergences(signal: ScanResult, btc: ScanResult): string[] {
 const POPULAR = [
   // Core L1
   'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT', 'DOTUSDT', 'ATOMUSDT',
-  // High-volatility memes / alts
-  'DOGEUSDT', 'SHIBUSDT', 'PEPEUSDT', 'WIFUSDT', 'BOMEUSDT', 'FLOKIUSDT',
-  // L2 / rollups
-  'ARBUSDT', 'OPUSDT', 'STRKUSDT', 'MATICUSDT',
+  // Memes — Bybit uses 1000x prefix for sub-cent tokens
+  'DOGEUSDT', '1000SHIBUSDT', '1000PEPEUSDT', 'WIFUSDT', '1000BOMEUSDT', '1000FLOKIUSDT',
+  // L2 / rollups (MATIC rebranded to POL)
+  'ARBUSDT', 'OPUSDT', 'STRKUSDT', 'POLUSDT',
   // Ecosystem tokens
-  'SUIUSDT', 'APTUSDT', 'INJUSDT', 'NEARUSDT', 'SEIUSDT', 'TIAUSDT', 'TONUSDT',
+  'SUIUSDT', 'APTUSDT', 'INJUSDT', 'NEARUSDT', 'SEIUSDT', 'TIAUSDT', 'XLMUSDT',
   // DeFi blue chips
   'LINKUSDT', 'AAVEUSDT', 'UNIUSDT', 'LDOUSDT', 'GRTUSDT',
   // AI / infra
-  'TAOUSDT', 'RNDRUSDT', 'WLDUSDT',
+  'TAOUSDT', 'RENDERUSDT', 'WLDUSDT',
   // Solana ecosystem
   'JUPUSDT', 'PYTHUSDT', 'JTOUSDT',
   // Bitcoin ecosystem

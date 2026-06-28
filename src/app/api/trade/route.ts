@@ -66,7 +66,9 @@ function makeBybitRequest(apiKey: string, apiSecret: string) {
       body: method === 'POST' ? JSON.stringify(body) : undefined,
       cache: 'no-store',
     });
-    return res.json();
+    const text = await res.text();
+    if (!text) throw new Error(`Bybit returned empty response (HTTP ${res.status}) — possible rate limit or invalid credentials`);
+    try { return JSON.parse(text); } catch { throw new Error(`Bybit bad JSON (HTTP ${res.status}): ${text.slice(0, 200)}`); }
   };
 }
 
