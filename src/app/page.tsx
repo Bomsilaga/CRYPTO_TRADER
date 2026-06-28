@@ -397,6 +397,11 @@ export default function Home() {
   const [deepseekKey, setDeepseekKey] = useState('');
   const [showAiKeys, setShowAiKeys] = useState(false);
 
+  // Server-side env var status (fetched once on mount — no values exposed)
+  const [serverStatus, setServerStatus] = useState<{
+    bybit: boolean; anthropic: boolean; openai: boolean; deepseek: boolean; testnet: boolean;
+  } | null>(null);
+
   // Account & risk
   const [accountSize, setAccountSize] = useState(2000);
   const [dailyLossLimit, setDailyLossLimit] = useState(80);
@@ -424,6 +429,11 @@ export default function Home() {
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
   const [aiWarnings, setAiWarnings] = useState<string[]>([]);
   const [aiProvider, setAiProvider] = useState<AiProvider>('claude');
+
+  // Fetch server env var status once on mount
+  useEffect(() => {
+    fetch('/api/status').then(r => r.json()).then(setServerStatus).catch(() => {});
+  }, []);
 
   // Load settings from localStorage
   useEffect(() => {
@@ -1300,7 +1310,7 @@ export default function Home() {
             {/* ── CONFIG STATUS ──────────────────────────────── */}
             {(() => {
               const checks = [
-                { label: 'Bybit API',      ok: !!(apiKey && apiSecret),       ok_text: 'Keys configured',       bad_text: 'No keys — paper mode only' },
+                { label: 'Bybit API',      ok: !!(apiKey && apiSecret) || !!serverStatus?.bybit,  ok_text: (apiKey && apiSecret) ? 'Local keys configured' : 'Vercel env vars active',  bad_text: 'No keys — paper mode only' },
                 { label: 'Trading mode',   ok: true,                           ok_text: liveMode ? '⚡ Live' : '📄 Paper', bad_text: '' },
                 { label: 'Leverage cap',   ok: capAt5x,                        ok_text: `Hard cap at ${MAX_LEVERAGE}×`, bad_text: 'Cap OFF — high risk' },
                 { label: 'Risk per trade', ok: riskPct <= 2,                   ok_text: `${riskPct}% (safe)`,    bad_text: `${riskPct}% — above 2% rec` },
@@ -1354,26 +1364,34 @@ export default function Home() {
             </div>
 
             {/* ── 2. BYBIT API KEYS ──────────────────────────── */}
-            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+            <div style={{ padding: 16, background: '#111118', border: `1px solid ${serverStatus?.bybit ? '#22c55e33' : '#1e1e2e'}`, borderRadius: 10 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>2 · BYBIT API KEYS</div>
+
+              {serverStatus?.bybit && !apiKey && (
+                <div style={{ marginBottom: 12, padding: '9px 12px', background: '#16a34a18', border: '1px solid #22c55e33', borderRadius: 6, fontSize: 12, color: '#22c55e' }}>
+                  ✓ Vercel environment variables active — no manual entry needed. Enter below only to override with different keys.
+                </div>
+              )}
 
               <div style={{ marginBottom: 10 }}>
                 <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>
-                  API Key
+                  API Key {serverStatus?.bybit ? <span style={{ color: '#475569', fontSize: 11 }}>(optional override)</span> : null}
                   {apiKey && <span style={{ color: '#22c55e', marginLeft: 8, fontSize: 11 }}>✓ set</span>}
                 </label>
-                <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Paste Bybit API key…"
+                <input value={apiKey} onChange={e => setApiKey(e.target.value)}
+                  placeholder={serverStatus?.bybit ? 'Leave blank to use Vercel env var…' : 'Paste Bybit API key…'}
                   style={{ width: '100%', padding: '10px 12px', background: '#0a0a0f', border: `1px solid ${apiKey ? '#22c55e33' : '#1e1e2e'}`, borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
               </div>
 
               <div style={{ marginBottom: 12 }}>
                 <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>
-                  API Secret
+                  API Secret {serverStatus?.bybit ? <span style={{ color: '#475569', fontSize: 11 }}>(optional override)</span> : null}
                   {apiSecret && <span style={{ color: '#22c55e', marginLeft: 8, fontSize: 11 }}>✓ set</span>}
                 </label>
                 <div style={{ position: 'relative' }}>
                   <input type={showSecret ? 'text' : 'password'} value={apiSecret}
-                    onChange={e => setApiSecret(e.target.value)} placeholder="Paste Bybit API secret…"
+                    onChange={e => setApiSecret(e.target.value)}
+                    placeholder={serverStatus?.bybit ? 'Leave blank to use Vercel env var…' : 'Paste Bybit API secret…'}
                     style={{ width: '100%', padding: '10px 42px 10px 12px', background: '#0a0a0f', border: `1px solid ${apiSecret ? '#22c55e33' : '#1e1e2e'}`, borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
                   <button onClick={() => setShowSecret(v => !v)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 16 }}>
                     {showSecret ? '🙈' : '👁'}
@@ -1644,25 +1662,30 @@ export default function Home() {
               </div>
 
               {([
-                { id: 'claude',   label: 'Anthropic (Claude)',  value: anthropicKey, set: setAnthropicKey, placeholder: 'sk-ant-…',  color: '#d97706', ok: !!anthropicKey },
-                { id: 'openai',   label: 'OpenAI (GPT-4o)',     value: openaiKey,    set: setOpenaiKey,    placeholder: 'sk-…',       color: '#10b981', ok: !!openaiKey },
-                { id: 'deepseek', label: 'DeepSeek',            value: deepseekKey,  set: setDeepseekKey,  placeholder: 'sk-…',       color: '#6366f1', ok: !!deepseekKey },
-              ] as { id: string; label: string; value: string; set: (v: string) => void; placeholder: string; color: string; ok: boolean }[]).map(p => (
+                { id: 'claude',   label: 'Anthropic (Claude)',  value: anthropicKey, set: setAnthropicKey, placeholder: 'sk-ant-…',  color: '#d97706', ok: !!anthropicKey, serverOk: !!serverStatus?.anthropic },
+                { id: 'openai',   label: 'OpenAI (GPT-4o)',     value: openaiKey,    set: setOpenaiKey,    placeholder: 'sk-…',       color: '#10b981', ok: !!openaiKey,    serverOk: !!serverStatus?.openai    },
+                { id: 'deepseek', label: 'DeepSeek',            value: deepseekKey,  set: setDeepseekKey,  placeholder: 'sk-…',       color: '#6366f1', ok: !!deepseekKey,  serverOk: !!serverStatus?.deepseek  },
+              ] as { id: string; label: string; value: string; set: (v: string) => void; placeholder: string; color: string; ok: boolean; serverOk: boolean }[]).map(p => (
                 <div key={p.id} style={{ marginBottom: 8 }}>
                   <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
                     <span style={{ color: aiProvider === p.id ? p.color : '#475569', fontWeight: aiProvider === p.id ? 700 : 400 }}>
                       {p.label}{aiProvider === p.id ? ' ← active' : ''}
                     </span>
-                    {p.ok && <span style={{ color: '#22c55e' }}>✓ set</span>}
+                    {p.ok
+                      ? <span style={{ color: '#22c55e' }}>✓ local key set</span>
+                      : p.serverOk
+                        ? <span style={{ color: '#22c55e' }}>✓ Vercel env var active</span>
+                        : null
+                    }
                   </label>
                   <input
                     type={showAiKeys ? 'text' : 'password'}
                     value={p.value}
                     onChange={e => p.set(e.target.value)}
-                    placeholder={p.placeholder}
+                    placeholder={p.serverOk && !p.ok ? 'Leave blank — using Vercel env var' : p.placeholder}
                     style={{
                       width: '100%', padding: '8px 12px', background: '#0a0a0f',
-                      border: `1px solid ${p.ok ? `${p.color}44` : '#1e1e2e'}`,
+                      border: `1px solid ${p.ok ? `${p.color}44` : p.serverOk ? '#22c55e22' : '#1e1e2e'}`,
                       borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 12,
                       boxSizing: 'border-box', fontFamily: 'monospace',
                     }}
@@ -1671,7 +1694,7 @@ export default function Home() {
               ))}
 
               <div style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6, fontSize: 11, color: '#334155', lineHeight: 1.6, marginTop: 4 }}>
-                Keys are stored in your browser only — never sent to any server except directly to the AI provider when you request an analysis.
+                Local keys (entered above) override Vercel env vars. Leave blank to use server-side keys.
                 Get keys: <span style={{ color: '#475569' }}>console.anthropic.com · platform.openai.com · platform.deepseek.com</span>
               </div>
             </div>
