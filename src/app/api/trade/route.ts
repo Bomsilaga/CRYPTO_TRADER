@@ -37,36 +37,37 @@ const BYBIT_BASE = process.env.BYBIT_TESTNET === 'true'
   ? 'https://api-testnet.bybit.com'
   : 'https://api.bybit.com';
 
-const API_KEY    = process.env.BYBIT_API_KEY    ?? '';
-const API_SECRET = process.env.BYBIT_API_SECRET ?? '';
-const PAPER_MODE = process.env.TRADING_MODE !== 'live';
+const ENV_API_KEY    = process.env.BYBIT_API_KEY    ?? '';
+const ENV_API_SECRET = process.env.BYBIT_API_SECRET ?? '';
 
 // Funding rate thresholds — beyond these, signal is high-risk
 const FUNDING_LONG_THRESHOLD  = 0.001;  // +0.1% — longs paying too much
 const FUNDING_SHORT_THRESHOLD = -0.001; // -0.1% — shorts paying too much
 
-function sign(params: Record<string, string | number>, timestamp: number): string {
+function makeSign(apiKey: string, apiSecret: string, params: Record<string, string | number>, timestamp: number): string {
   const ordered = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join('&');
-  const payload = `${timestamp}${API_KEY}5000${ordered}`;
-  return crypto.createHmac('sha256', API_SECRET).update(payload).digest('hex');
+  const payload = `${timestamp}${apiKey}5000${ordered}`;
+  return crypto.createHmac('sha256', apiSecret).update(payload).digest('hex');
 }
 
-async function bybitRequest(method: 'GET' | 'POST', path: string, body: Record<string, string | number> = {}) {
-  const ts = Date.now();
-  const sig = sign(body, ts);
-  const res = await fetch(`${BYBIT_BASE}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-BAPI-API-KEY': API_KEY,
-      'X-BAPI-TIMESTAMP': String(ts),
-      'X-BAPI-SIGN': sig,
-      'X-BAPI-RECV-WINDOW': '5000',
-    },
-    body: method === 'POST' ? JSON.stringify(body) : undefined,
-    cache: 'no-store',
-  });
-  return res.json();
+function makeBybitRequest(apiKey: string, apiSecret: string) {
+  return async function bybitRequest(method: 'GET' | 'POST', path: string, body: Record<string, string | number> = {}) {
+    const ts = Date.now();
+    const sig = makeSign(apiKey, apiSecret, body, ts);
+    const res = await fetch(`${BYBIT_BASE}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-BAPI-API-KEY': apiKey,
+        'X-BAPI-TIMESTAMP': String(ts),
+        'X-BAPI-SIGN': sig,
+        'X-BAPI-RECV-WINDOW': '5000',
+      },
+      body: method === 'POST' ? JSON.stringify(body) : undefined,
+      cache: 'no-store',
+    });
+    return res.json();
+  };
 }
 
 export interface TradeRequest {
@@ -80,9 +81,13 @@ export interface TradeRequest {
   leverage: number;
   riskPct: number;
   style: string;
-  orderType?: 'Market' | 'Limit'; // NEW: default Market, Limit saves fees
-  force?: boolean;                 // NEW: override funding rate rejection
-  userLeverage?: number;           // NEW: user's intended leverage for warning check
+  orderType?: 'Market' | 'Limit';
+  force?: boolean;
+  userLeverage?: number;
+  // Client-supplied keys (take precedence over env vars)
+  apiKey?: string;
+  apiSecret?: string;
+  liveMode?: boolean;
 }
 
 export async function POST(req: NextRequest) {
@@ -90,12 +95,21 @@ export async function POST(req: NextRequest) {
     const body: TradeRequest = await req.json();
     const {
       symbol, direction, entry, stopLoss, tp1, tp2, tp3,
-      leverage, riskPct, orderType = 'Market', force = false, userLeverage
+      leverage, riskPct, orderType = 'Market', force = false, userLeverage,
+      apiKey: bodyApiKey, apiSecret: bodyApiSecret, liveMode,
     } = body;
 
+    // Client-supplied keys take precedence over env vars
+    const API_KEY    = bodyApiKey    || ENV_API_KEY;
+    const API_SECRET = bodyApiSecret || ENV_API_SECRET;
+    // Paper mode: env default unless client explicitly sets liveMode=true
+    const PAPER_MODE = typeof liveMode === 'boolean' ? !liveMode : ENV_API_KEY === '';
+
     if (!API_KEY || !API_SECRET) {
-      return NextResponse.json({ error: 'Bybit API keys not configured' }, { status: 500 });
+      return NextResponse.json({ error: 'Bybit API keys not configured. Add them in ⚙️ Settings.' }, { status: 400 });
     }
+
+    const bybitRequest = makeBybitRequest(API_KEY, API_SECRET);
 
     // ── FUNDING RATE CHECK (Grey Zone 3 fix) ─────────────────────────────
     if (!force) {

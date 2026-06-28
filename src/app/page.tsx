@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 
+/* ─── Types ──────────────────────────────────────────────────────────────── */
+
 interface AutoScanAlert {
   symbol: string;
   score: number;
@@ -58,7 +60,45 @@ interface ScanResult {
   error?: string;
 }
 
-const POPULAR = ['ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT'];
+interface TradeResult {
+  paper?: boolean;
+  success?: boolean;
+  rejected?: boolean;
+  error?: string;
+  message?: string;
+  reason?: string;
+  leverageWarning?: string;
+  orderId?: string;
+  qty?: number;
+  balance?: string;
+  riskAmt?: string;
+  fundingChecked?: boolean;
+  feeEstimate?: {
+    totalFee: string;
+    entryFee?: string;
+    exitFee?: string;
+    note?: string;
+  };
+  simulated?: {
+    symbol: string;
+    direction: string;
+    entry: number;
+    stopLoss: number;
+    tp1: number;
+    leverage: number;
+    riskPct: number;
+  };
+}
+
+/* ─── Constants ──────────────────────────────────────────────────────────── */
+
+const POPULAR = [
+  'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT',
+  'LINKUSDT', 'NEARUSDT', 'OPUSDT', 'ARBUSDT', 'SUIUSDT', 'APTUSDT', 'INJUSDT', 'ATOMUSDT',
+  'LTCUSDT', 'TONUSDT', 'PEPEUSDT', 'WIFUSDT', 'SEIUSDT', 'TIAUSDT', 'FILUSDT', 'MATICUSDT',
+];
+
+/* ─── Sub-components ─────────────────────────────────────────────────────── */
 
 function Badge({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -86,12 +126,54 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
+/* ─── Main component ─────────────────────────────────────────────────────── */
+
 export default function Home() {
+  // Scan state
   const [symbol, setSymbol] = useState('ETHUSDT');
   const [result, setResult] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
   const [autoScan, setAutoScan] = useState<AutoScanResult | null>(null);
+
+  // Settings state
+  const [showSettings, setShowSettings] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [apiSecret, setApiSecret] = useState('');
+  const [showSecret, setShowSecret] = useState(false);
+  const [liveMode, setLiveMode] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+
+  // Trade state
+  const [riskPct, setRiskPct] = useState(1);
+  const [orderType, setOrderType] = useState<'Market' | 'Limit'>('Limit');
+  const [userLeverage, setUserLeverage] = useState<number | ''>('');
+  const [forceTrade, setForceTrade] = useState(false);
+  const [tradeLoading, setTradeLoading] = useState(false);
+  const [tradeResult, setTradeResult] = useState<TradeResult | null>(null);
+
+  // Load settings from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('4scans-settings');
+      if (saved) {
+        const s = JSON.parse(saved);
+        if (s.apiKey) setApiKey(s.apiKey);
+        if (s.apiSecret) setApiSecret(s.apiSecret);
+        if (typeof s.liveMode === 'boolean') setLiveMode(s.liveMode);
+        if (s.riskPct) setRiskPct(s.riskPct);
+        if (s.orderType) setOrderType(s.orderType);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  function saveSettings() {
+    try {
+      localStorage.setItem('4scans-settings', JSON.stringify({ apiKey, apiSecret, liveMode, riskPct, orderType }));
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2000);
+    } catch { /* ignore */ }
+  }
 
   // Poll for latest autoscan result every 60s
   useEffect(() => {
@@ -110,10 +192,13 @@ export default function Home() {
   async function scan(sym = symbol) {
     setLoading(true);
     setResult(null);
+    setTradeResult(null);
     try {
       const res = await fetch(`/api/scan?symbol=${sym.toUpperCase()}`);
       const data = await res.json() as ScanResult;
       setResult(data);
+      // Pre-fill leverage from engine recommendation
+      if (data?.masterSignal?.leverage) setUserLeverage(data.masterSignal.leverage);
     } catch (e) {
       setResult({ ok: false, error: String(e) } as ScanResult);
     } finally {
@@ -121,19 +206,163 @@ export default function Home() {
     }
   }
 
+  async function enterTrade() {
+    if (!result?.ok || result.direction === 'NEUTRAL') return;
+    setTradeLoading(true);
+    setTradeResult(null);
+    try {
+      const res = await fetch('/api/trade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: result.symbol,
+          direction: result.direction,
+          entry: result.masterSignal.entry,
+          stopLoss: result.masterSignal.stopLoss,
+          tp1: result.masterSignal.tp1,
+          tp2: result.masterSignal.tp2,
+          tp3: result.masterSignal.tp3,
+          leverage: typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage,
+          riskPct,
+          style: result.bestSetup,
+          orderType,
+          force: forceTrade,
+          userLeverage: typeof userLeverage === 'number' ? userLeverage : undefined,
+          // Pass API credentials from client storage
+          ...(apiKey && { apiKey }),
+          ...(apiSecret && { apiSecret }),
+          liveMode,
+        }),
+      });
+      const data = await res.json() as TradeResult;
+      setTradeResult(data);
+    } catch (e) {
+      setTradeResult({ error: String(e) });
+    } finally {
+      setTradeLoading(false);
+    }
+  }
+
   const dirColor = result?.direction === 'LONG' ? '#22c55e' : result?.direction === 'SHORT' ? '#ef4444' : '#94a3b8';
+  const canTrade = result?.ok && result.direction !== 'NEUTRAL';
 
   return (
     <main style={{ maxWidth: 760, margin: '0 auto', padding: '24px 16px' }}>
+
       {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.5px' }}>
-          🚀 4SCANS
-        </h1>
-        <p style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>
-          Bybit perpetuals · ICT + Wyckoff signal engine
-        </p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.5px' }}>
+            🚀 4SCANS
+          </h1>
+          <p style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>
+            Bybit perpetuals · ICT + Wyckoff signal engine
+          </p>
+        </div>
+        <button
+          onClick={() => setShowSettings(v => !v)}
+          style={{
+            padding: '8px 14px', background: '#111118',
+            border: `1px solid ${showSettings ? '#6366f1' : '#1e1e2e'}`,
+            borderRadius: 8, color: showSettings ? '#818cf8' : '#64748b',
+            cursor: 'pointer', fontSize: 13, fontWeight: 600,
+          }}
+        >
+          ⚙️ Settings
+        </button>
       </div>
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <div style={{ padding: 16, background: '#111118', border: '1px solid #6366f144', borderRadius: 10, marginBottom: 20 }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', marginBottom: 14 }}>API & TRADING SETTINGS</div>
+
+          {/* Live / Paper toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+            <span style={{ color: '#94a3b8', fontSize: 13, minWidth: 110 }}>Trading Mode</span>
+            <div style={{ display: 'flex', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 8, overflow: 'hidden' }}>
+              {(['Paper', 'Live'] as const).map(mode => (
+                <button
+                  key={mode}
+                  onClick={() => setLiveMode(mode === 'Live')}
+                  style={{
+                    padding: '6px 16px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                    background: (liveMode ? 'Live' : 'Paper') === mode
+                      ? mode === 'Live' ? '#ef444422' : '#16a34a22'
+                      : 'transparent',
+                    color: (liveMode ? 'Live' : 'Paper') === mode
+                      ? mode === 'Live' ? '#ef4444' : '#22c55e'
+                      : '#475569',
+                  }}
+                >
+                  {mode === 'Live' ? '⚡ Live' : '📄 Paper'}
+                </button>
+              ))}
+            </div>
+            {liveMode && (
+              <span style={{ fontSize: 11, color: '#ef4444', background: '#ef444422', padding: '3px 8px', borderRadius: 4 }}>
+                REAL MONEY
+              </span>
+            )}
+          </div>
+
+          {/* API Key */}
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>Bybit API Key</label>
+            <input
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              placeholder="Enter your Bybit API key"
+              style={{
+                width: '100%', padding: '9px 12px', background: '#0a0a0f',
+                border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0',
+                outline: 'none', fontSize: 13, boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          {/* API Secret */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>Bybit API Secret</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showSecret ? 'text' : 'password'}
+                value={apiSecret}
+                onChange={e => setApiSecret(e.target.value)}
+                placeholder="Enter your Bybit API secret"
+                style={{
+                  width: '100%', padding: '9px 40px 9px 12px', background: '#0a0a0f',
+                  border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0',
+                  outline: 'none', fontSize: 13, boxSizing: 'border-box',
+                }}
+              />
+              <button
+                onClick={() => setShowSecret(v => !v)}
+                style={{
+                  position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                  background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 14,
+                }}
+              >
+                {showSecret ? '🙈' : '👁'}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
+              Keys are stored in your browser only and sent over HTTPS with each trade request.
+            </div>
+          </div>
+
+          <button
+            onClick={saveSettings}
+            style={{
+              padding: '8px 18px', background: settingsSaved ? '#16a34a' : '#6366f1',
+              color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer',
+              fontWeight: 600, fontSize: 13, transition: 'background 0.2s',
+            }}
+          >
+            {settingsSaved ? '✓ Saved' : 'Save Settings'}
+          </button>
+        </div>
+      )}
 
       {/* Search */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -330,6 +559,184 @@ export default function Home() {
               </div>
             </div>
           </div>
+
+          {/* ── TRADE EXECUTION PANEL ───────────────────────────────────── */}
+          {canTrade && (
+            <div style={{
+              padding: 16, borderRadius: 10,
+              background: result.direction === 'LONG' ? '#16a34a11' : '#ef444411',
+              border: `1px solid ${result.direction === 'LONG' ? '#16a34a44' : '#ef444444'}`,
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 14, fontSize: 13, color: dirColor }}>
+                {result.direction === 'LONG' ? '▲' : '▼'} ENTER {result.direction}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                {/* Risk % */}
+                <div>
+                  <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>
+                    Risk % of balance
+                  </label>
+                  <input
+                    type="number"
+                    min={0.1} max={10} step={0.1}
+                    value={riskPct}
+                    onChange={e => setRiskPct(parseFloat(e.target.value) || 1)}
+                    style={{
+                      width: '100%', padding: '8px 10px', background: '#0a0a0f',
+                      border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0',
+                      outline: 'none', fontSize: 13, boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {/* Leverage */}
+                <div>
+                  <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>
+                    Leverage (rec: {result.masterSignal.leverage}×)
+                  </label>
+                  <input
+                    type="number"
+                    min={1} max={100}
+                    value={userLeverage}
+                    onChange={e => setUserLeverage(parseInt(e.target.value) || '')}
+                    placeholder={String(result.masterSignal.leverage)}
+                    style={{
+                      width: '100%', padding: '8px 10px', background: '#0a0a0f',
+                      border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0',
+                      outline: 'none', fontSize: 13, boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Order type toggle */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <span style={{ color: '#64748b', fontSize: 12, minWidth: 80 }}>Order type</span>
+                <div style={{ display: 'flex', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, overflow: 'hidden' }}>
+                  {(['Limit', 'Market'] as const).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setOrderType(t)}
+                      style={{
+                        padding: '5px 14px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                        background: orderType === t ? '#6366f133' : 'transparent',
+                        color: orderType === t ? '#818cf8' : '#475569',
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                {orderType === 'Limit' && (
+                  <span style={{ fontSize: 11, color: '#22c55e' }}>saves ~0.035% fees</span>
+                )}
+              </div>
+
+              {/* Force funding checkbox */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={forceTrade}
+                  onChange={e => setForceTrade(e.target.checked)}
+                  style={{ accentColor: '#6366f1' }}
+                />
+                <span style={{ color: '#64748b', fontSize: 12 }}>
+                  Force trade (override funding rate check)
+                </span>
+              </label>
+
+              {/* Mode indicator */}
+              <div style={{ marginBottom: 12, padding: '6px 10px', borderRadius: 6, fontSize: 12,
+                background: liveMode ? '#ef444422' : '#16a34a22',
+                color: liveMode ? '#ef4444' : '#22c55e',
+                border: `1px solid ${liveMode ? '#ef444444' : '#16a34a44'}`,
+              }}>
+                {liveMode
+                  ? '⚡ LIVE MODE — real order will be placed on Bybit'
+                  : '📄 PAPER MODE — simulated order, no real execution'}
+                {!liveMode && <span style={{ color: '#475569', marginLeft: 6 }}>(change in ⚙️ Settings)</span>}
+              </div>
+
+              {/* Enter trade button */}
+              <button
+                onClick={enterTrade}
+                disabled={tradeLoading}
+                style={{
+                  width: '100%', padding: '12px 0', border: 'none', borderRadius: 8,
+                  fontWeight: 700, fontSize: 15, cursor: tradeLoading ? 'not-allowed' : 'pointer',
+                  background: tradeLoading ? '#1e1e2e' : result.direction === 'LONG' ? '#16a34a' : '#dc2626',
+                  color: tradeLoading ? '#475569' : '#fff',
+                  transition: 'opacity 0.2s',
+                }}
+              >
+                {tradeLoading
+                  ? 'Placing order…'
+                  : `${result.direction === 'LONG' ? '▲ BUY' : '▼ SELL'} ${result.symbol} — ${liveMode ? 'LIVE' : 'PAPER'}`}
+              </button>
+            </div>
+          )}
+
+          {/* Trade result */}
+          {tradeResult && (
+            <div style={{
+              padding: 14, borderRadius: 10,
+              background: tradeResult.error ? '#ef444422' : tradeResult.rejected ? '#eab30822' : '#16a34a22',
+              border: `1px solid ${tradeResult.error ? '#ef444444' : tradeResult.rejected ? '#eab30844' : '#16a34a44'}`,
+            }}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8,
+                color: tradeResult.error ? '#ef4444' : tradeResult.rejected ? '#eab308' : '#22c55e',
+              }}>
+                {tradeResult.error ? '✗ Trade Error' : tradeResult.rejected ? '⚠ Trade Rejected' : tradeResult.paper ? '📄 Paper Trade' : '✓ Order Placed'}
+              </div>
+
+              {tradeResult.message && (
+                <div style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 8 }}>{tradeResult.message}</div>
+              )}
+              {tradeResult.error && (
+                <div style={{ color: '#ef4444', fontSize: 13 }}>{tradeResult.error}</div>
+              )}
+              {tradeResult.leverageWarning && (
+                <div style={{ color: '#eab308', fontSize: 12, marginBottom: 6 }}>{tradeResult.leverageWarning}</div>
+              )}
+
+              {/* Paper / live details */}
+              {(tradeResult.paper || tradeResult.success) && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#94a3b8' }}>
+                  {tradeResult.orderId && <div>Order ID: <span style={{ color: '#e2e8f0' }}>{tradeResult.orderId}</span></div>}
+                  {tradeResult.qty && <div>Qty: <span style={{ color: '#e2e8f0' }}>{tradeResult.qty}</span></div>}
+                  {tradeResult.balance && <div>Balance: <span style={{ color: '#e2e8f0' }}>${tradeResult.balance}</span></div>}
+                  {tradeResult.riskAmt && <div>Risk amount: <span style={{ color: '#e2e8f0' }}>${tradeResult.riskAmt}</span></div>}
+                  {tradeResult.feeEstimate && (
+                    <div>Est. fees: <span style={{ color: '#e2e8f0' }}>${tradeResult.feeEstimate.totalFee}</span>
+                      {tradeResult.feeEstimate.note && <span style={{ color: '#475569' }}> · {tradeResult.feeEstimate.note}</span>}
+                    </div>
+                  )}
+                  {tradeResult.simulated && (
+                    <div style={{ marginTop: 4 }}>
+                      <span style={{ color: '#475569' }}>Simulated · </span>
+                      {tradeResult.simulated.symbol} {tradeResult.simulated.direction} @{' '}
+                      ${tradeResult.simulated.entry} · {tradeResult.simulated.leverage}× · {tradeResult.simulated.riskPct}% risk
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Retry with force */}
+              {tradeResult.rejected && !forceTrade && (
+                <button
+                  onClick={() => { setForceTrade(true); }}
+                  style={{
+                    marginTop: 8, padding: '6px 14px', background: '#eab30822',
+                    border: '1px solid #eab30844', borderRadius: 6, color: '#eab308',
+                    cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                  }}
+                >
+                  Enable force override and retry
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Verdict */}
           <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
