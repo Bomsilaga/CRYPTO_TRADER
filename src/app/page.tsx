@@ -135,7 +135,10 @@ function RiskCalculator() {
   const exitFee  = position * takerFee; // exit is always taker for speed
   const totalFee = entryFee + exitFee;
   const netProfit = grossProfit - totalFee;
-  const liquidationPct = (100 / leverage).toFixed(1);
+  // Bybit isolated margin liq formula: distance = 1/leverage - MMR
+  // Standard MMR for retail positions < $500k notional = 0.5%
+  const MMR = 0.005;
+  const liquidationPct = Math.max(0, (1 / leverage - MMR) * 100).toFixed(1);
   const tradesNeeded = netProfit > 0 ? Math.ceil(dailyTarget / netProfit) : '∞';
   const feeSavingVsMarket = orderTypeCalc === 'limit'
     ? (position * (takerFee - makerFee)).toFixed(2)
@@ -332,6 +335,13 @@ export default function Home() {
   const [liveMode, setLiveMode] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
+  // Account & risk
+  const [accountSize, setAccountSize] = useState(2000);
+  const [dailyLossLimit, setDailyLossLimit] = useState(80);
+  const [dailyTarget, setDailyTarget] = useState(100);
+  const [maxTrades, setMaxTrades] = useState(5);
+  const [targetSpotPct, setTargetSpotPct] = useState(1); // expected spot move % per trade
+
   // Trade state
   const [riskPct, setRiskPct] = useState(1);
   const [orderType, setOrderType] = useState<'Market' | 'Limit'>('Limit');
@@ -339,7 +349,7 @@ export default function Home() {
   const [forceTrade, setForceTrade] = useState(false);
   const [tradeLoading, setTradeLoading] = useState(false);
   const [tradeResult, setTradeResult] = useState<TradeResult | null>(null);
-  const [capAt5x, setCapAt5x] = useState(true); // hard cap leverage at 5×
+  const [capAt5x, setCapAt5x] = useState(true);
 
   // Trade journal
   const [trades, setTrades] = useState<TradeEntry[]>([]);
@@ -359,20 +369,28 @@ export default function Home() {
       const saved = localStorage.getItem('4scans-settings');
       if (saved) {
         const s = JSON.parse(saved);
-        if (s.apiKey) setApiKey(s.apiKey);
+        if (s.apiKey)    setApiKey(s.apiKey);
         if (s.apiSecret) setApiSecret(s.apiSecret);
         if (typeof s.liveMode === 'boolean') setLiveMode(s.liveMode);
-        if (s.riskPct) setRiskPct(s.riskPct);
+        if (s.riskPct)   setRiskPct(s.riskPct);
         if (s.orderType) setOrderType(s.orderType);
         if (typeof s.capAt5x === 'boolean') setCapAt5x(s.capAt5x);
         if (s.aiProvider) setAiProvider(s.aiProvider as AiProvider);
+        if (s.accountSize)    setAccountSize(s.accountSize);
+        if (s.dailyLossLimit) setDailyLossLimit(s.dailyLossLimit);
+        if (s.dailyTarget)    setDailyTarget(s.dailyTarget);
+        if (s.maxTrades)      setMaxTrades(s.maxTrades);
+        if (s.targetSpotPct)  setTargetSpotPct(s.targetSpotPct);
       }
     } catch { /* ignore */ }
   }, []);
 
   function saveSettings() {
     try {
-      localStorage.setItem('4scans-settings', JSON.stringify({ apiKey, apiSecret, liveMode, riskPct, orderType, capAt5x, aiProvider }));
+      localStorage.setItem('4scans-settings', JSON.stringify({
+        apiKey, apiSecret, liveMode, riskPct, orderType, capAt5x, aiProvider,
+        accountSize, dailyLossLimit, dailyTarget, maxTrades, targetSpotPct,
+      }));
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch { /* ignore */ }
@@ -1195,148 +1213,392 @@ export default function Home() {
         {tab === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-            {/* Live / Paper */}
+            {/* ── CONFIG STATUS ──────────────────────────────── */}
+            {(() => {
+              const checks = [
+                { label: 'Bybit API',      ok: !!(apiKey && apiSecret),       ok_text: 'Keys configured',       bad_text: 'No keys — paper mode only' },
+                { label: 'Trading mode',   ok: true,                           ok_text: liveMode ? '⚡ Live' : '📄 Paper', bad_text: '' },
+                { label: 'Leverage cap',   ok: capAt5x,                        ok_text: `Hard cap at ${MAX_LEVERAGE}×`, bad_text: 'Cap OFF — high risk' },
+                { label: 'Risk per trade', ok: riskPct <= 2,                   ok_text: `${riskPct}% (safe)`,    bad_text: `${riskPct}% — above 2% rec` },
+                { label: 'Order type',     ok: orderType === 'Limit',          ok_text: 'Limit (saves fees)',    bad_text: 'Market — paying taker fees' },
+                { label: 'AI provider',    ok: true,                           ok_text: aiProvider === 'claude' ? 'Claude (Haiku)' : aiProvider === 'openai' ? 'GPT-4o mini' : 'DeepSeek', bad_text: '' },
+              ];
+              const warnings = checks.filter(c => !c.ok).length;
+              return (
+                <div style={{ padding: 14, background: '#111118', border: `1px solid ${warnings > 0 ? '#eab30833' : '#1e2e1e'}`, borderRadius: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8' }}>CONFIG STATUS</span>
+                    <span style={{ fontSize: 11, color: warnings > 0 ? '#eab308' : '#22c55e', fontWeight: 700 }}>
+                      {warnings > 0 ? `${warnings} item${warnings > 1 ? 's' : ''} need attention` : '✓ All good'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {checks.map(c => (
+                      <div key={c.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', background: '#0a0a0f', borderRadius: 6 }}>
+                        <span style={{ fontSize: 12, color: '#64748b' }}>{c.label}</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: c.ok ? '#22c55e' : '#eab308' }}>
+                          {c.ok ? c.ok_text : `⚠ ${c.bad_text}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── 1. TRADING MODE ────────────────────────────── */}
             <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8', marginBottom: 14 }}>TRADING MODE</div>
-              <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>1 · TRADING MODE</div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                 {(['Paper', 'Live'] as const).map(mode => (
                   <button key={mode} onClick={() => setLiveMode(mode === 'Live')} style={{
-                    flex: 1, padding: '12px 0', cursor: 'pointer',
-                    fontWeight: 700, fontSize: 14, borderRadius: 8,
+                    flex: 1, padding: '13px 0', cursor: 'pointer', fontWeight: 800, fontSize: 14, borderRadius: 8,
                     background: (liveMode ? 'Live' : 'Paper') === mode
-                      ? mode === 'Live' ? '#dc2626' : '#16a34a'
-                      : '#0a0a0f',
-                    color: (liveMode ? 'Live' : 'Paper') === mode ? '#fff' : '#475569',
+                      ? mode === 'Live' ? '#dc2626' : '#16a34a' : '#0a0a0f',
+                    color: (liveMode ? 'Live' : 'Paper') === mode ? '#fff' : '#334155',
                     border: `1px solid ${(liveMode ? 'Live' : 'Paper') === mode ? 'transparent' : '#1e1e2e'}`,
                   }}>
                     {mode === 'Live' ? '⚡ Live Trading' : '📄 Paper Mode'}
                   </button>
                 ))}
               </div>
-              <div style={{ fontSize: 12, color: liveMode ? '#ef4444' : '#475569', padding: '8px 12px', background: '#0a0a0f', borderRadius: 6 }}>
+              <div style={{ fontSize: 12, color: liveMode ? '#ef4444' : '#475569', padding: '8px 12px', background: '#0a0a0f', borderRadius: 6, lineHeight: 1.5 }}>
                 {liveMode
-                  ? '⚠ LIVE MODE: Real orders will be placed on Bybit with real money. Ensure your API keys are correct and risk settings are conservative.'
-                  : 'Paper mode simulates trades without touching real funds. Use this while learning the system.'}
+                  ? '⚠ LIVE MODE active — real orders fire on Bybit with real money. Confirm API keys and risk limits below before trading.'
+                  : 'Paper mode simulates every trade — no real funds used. Master the system here before switching live.'}
               </div>
             </div>
 
-            {/* Default trade params */}
+            {/* ── 2. BYBIT API KEYS ──────────────────────────── */}
             <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8', marginBottom: 14 }}>DEFAULT TRADE PARAMS</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-                <div>
-                  <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>Default risk % per trade</label>
-                  <input type="number" min={0.1} max={10} step={0.1} value={riskPct}
-                    onChange={e => setRiskPct(parseFloat(e.target.value) || 1)}
-                    style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>Default order type</label>
-                  <div style={{ display: 'flex', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, overflow: 'hidden' }}>
-                    {(['Limit', 'Market'] as const).map(t => (
-                      <button key={t} onClick={() => setOrderType(t)} style={{
-                        flex: 1, padding: '9px 0', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-                        background: orderType === t ? '#6366f133' : 'transparent',
-                        color: orderType === t ? '#818cf8' : '#475569',
-                      }}>{t}</button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div style={{ fontSize: 11, color: '#334155', padding: '6px 10px', background: '#0a0a0f', borderRadius: 6 }}>
-                Limit orders cost 0.02% (maker) vs 0.055% (taker) — saves $2–3 per $6k position. Always use Limit unless urgency requires Market.
+              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>2 · BYBIT API KEYS</div>
+
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>
+                  API Key
+                  {apiKey && <span style={{ color: '#22c55e', marginLeft: 8, fontSize: 11 }}>✓ set</span>}
+                </label>
+                <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Paste Bybit API key…"
+                  style={{ width: '100%', padding: '10px 12px', background: '#0a0a0f', border: `1px solid ${apiKey ? '#22c55e33' : '#1e1e2e'}`, borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
               </div>
 
-              {/* 5× leverage cap toggle */}
-              <div style={{ marginTop: 14, padding: 12, background: capAt5x ? '#16a34a11' : '#ef444411', border: `1px solid ${capAt5x ? '#16a34a44' : '#ef444444'}`, borderRadius: 8 }}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>
+                  API Secret
+                  {apiSecret && <span style={{ color: '#22c55e', marginLeft: 8, fontSize: 11 }}>✓ set</span>}
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input type={showSecret ? 'text' : 'password'} value={apiSecret}
+                    onChange={e => setApiSecret(e.target.value)} placeholder="Paste Bybit API secret…"
+                    style={{ width: '100%', padding: '10px 42px 10px 12px', background: '#0a0a0f', border: `1px solid ${apiSecret ? '#22c55e33' : '#1e1e2e'}`, borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                  <button onClick={() => setShowSecret(v => !v)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 16 }}>
+                    {showSecret ? '🙈' : '👁'}
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6, fontSize: 11, color: '#334155', lineHeight: 1.6 }}>
+                Keys are stored in your browser only — never sent to any server except Bybit directly over HTTPS.
+                On Bybit: Account → API Management → Create key with <strong style={{ color: '#475569' }}>Trade</strong> permission only. No withdrawal permission needed or wanted.
+              </div>
+            </div>
+
+            {/* ── 3. ACCOUNT & RISK LIMITS ───────────────────── */}
+            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>3 · ACCOUNT & RISK LIMITS</div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                {/* Account size */}
+                <div>
+                  <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>
+                    Account size (USDT) <span style={{ color: '#334155' }}>· your balance</span>
+                  </label>
+                  <input type="number" min={100} value={accountSize} onChange={e => setAccountSize(+e.target.value || 2000)}
+                    style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                </div>
+
+                {/* Risk per trade */}
+                <div>
+                  <label style={{ display: 'block', fontSize: 11, marginBottom: 3 }}>
+                    <span style={{ color: '#64748b' }}>Risk per trade (%)</span>
+                    <span style={{ marginLeft: 6, fontSize: 10, color: riskPct <= 1 ? '#22c55e' : riskPct <= 2 ? '#eab308' : '#ef4444', fontWeight: 700 }}>
+                      {riskPct <= 1 ? '✓ conservative' : riskPct <= 2 ? '⚠ moderate' : '✗ high risk'}
+                    </span>
+                  </label>
+                  <input type="number" min={0.1} max={10} step={0.1} value={riskPct} onChange={e => setRiskPct(parseFloat(e.target.value) || 1)}
+                    style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: `1px solid ${riskPct <= 2 ? '#1e1e2e' : '#ef444444'}`, borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                </div>
+
+                {/* Daily loss limit */}
+                <div>
+                  <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>
+                    Daily loss limit ($) <span style={{ color: '#334155' }}>· rec: ${(accountSize * 0.04).toFixed(0)}</span>
+                  </label>
+                  <input type="number" min={10} value={dailyLossLimit} onChange={e => setDailyLossLimit(+e.target.value || 80)}
+                    style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #ef444433', borderRadius: 6, color: '#ef4444', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                </div>
+
+                {/* Daily profit target */}
+                <div>
+                  <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>
+                    Daily profit target ($) <span style={{ color: '#334155' }}>· rec: ${(accountSize * 0.05).toFixed(0)}</span>
+                  </label>
+                  <input type="number" min={10} value={dailyTarget} onChange={e => setDailyTarget(+e.target.value || 100)}
+                    style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #22c55e33', borderRadius: 6, color: '#22c55e', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                </div>
+              </div>
+
+              {/* Max trades per day */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 6 }}>
+                  Max trades per day <span style={{ color: '#334155' }}>· rec: 3–5 quality setups only</span>
+                </label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[3, 4, 5, 7, 10].map(n => (
+                    <button key={n} onClick={() => setMaxTrades(n)} style={{
+                      padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700,
+                      background: maxTrades === n ? (n <= 5 ? '#22c55e22' : '#ef444422') : '#0a0a0f',
+                      color: maxTrades === n ? (n <= 5 ? '#22c55e' : '#ef4444') : '#334155',
+                    }}>{n}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Expected spot move / ROI per trade */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 11, marginBottom: 6 }}>
+                  <span style={{ color: '#64748b' }}>Expected spot move per trade (%)</span>
+                  <span style={{ color: '#334155', marginLeft: 6 }}>· rec: 0.5–1.5% realistic target</span>
+                </label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[0.5, 0.75, 1, 1.5, 2].map(p => (
+                    <button key={p} onClick={() => setTargetSpotPct(p)} style={{
+                      padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                      background: targetSpotPct === p ? '#6366f133' : '#0a0a0f',
+                      color: targetSpotPct === p ? '#818cf8' : '#334155',
+                    }}>{p}%</button>
+                  ))}
+                  <input type="number" min={0.1} max={10} step={0.1} value={targetSpotPct}
+                    onChange={e => setTargetSpotPct(parseFloat(e.target.value) || 1)}
+                    style={{ width: 58, padding: '6px 8px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#94a3b8', outline: 'none', fontSize: 12, textAlign: 'center' }} />
+                </div>
+              </div>
+
+              {/* Live P&L math */}
+              {(() => {
+                const effLev = capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5;
+                const position = accountSize * effLev;
+                const takerFee = 0.00055;
+                const makerFee = 0.00020;
+                const entryFee = position * (orderType === 'Limit' ? makerFee : takerFee);
+                const exitFee  = position * takerFee;
+                const grossProfit = position * (targetSpotPct / 100);
+                const netProfit = grossProfit - entryFee - exitFee;
+                const riskAmt = accountSize * riskPct / 100;
+                const rr = netProfit / riskAmt;
+                const tradesNeeded = netProfit > 0 ? Math.ceil(dailyTarget / netProfit) : '∞';
+                return (
+                  <div style={{ background: '#0a0a0f', borderRadius: 8, padding: '12px 14px' }}>
+                    <div style={{ fontWeight: 700, fontSize: 11, color: '#334155', marginBottom: 8, letterSpacing: '0.06em' }}>LIVE MATH AT {effLev}× · {targetSpotPct}% MOVE</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px 10px', fontSize: 12 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#475569' }}>Position</span>
+                        <span style={{ color: '#e2e8f0', fontWeight: 700 }}>${position.toLocaleString()}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#475569' }}>Risk amount</span>
+                        <span style={{ color: '#ef4444', fontWeight: 700 }}>−${riskAmt.toFixed(0)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#475569' }}>Gross profit</span>
+                        <span style={{ color: '#94a3b8' }}>+${grossProfit.toFixed(2)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#475569' }}>Fees (round trip)</span>
+                        <span style={{ color: '#eab308' }}>−${(entryFee + exitFee).toFixed(2)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#22c55e', fontWeight: 700 }}>Net profit</span>
+                        <span style={{ color: netProfit > 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>+${netProfit.toFixed(2)}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#475569' }}>ROI on margin</span>
+                        <span style={{ color: '#818cf8', fontWeight: 700 }}>{((netProfit / accountSize) * 100).toFixed(2)}%</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#475569' }}>Net R:R</span>
+                        <span style={{ color: rr >= 2 ? '#22c55e' : rr >= 1 ? '#eab308' : '#ef4444', fontWeight: 700 }}>{rr.toFixed(2)}×</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#475569' }}>Wins to hit ${dailyTarget}</span>
+                        <span style={{ color: typeof tradesNeeded === 'number' && tradesNeeded <= maxTrades ? '#22c55e' : '#eab308', fontWeight: 700 }}>{tradesNeeded} trades</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#475569' }}>Liq. distance</span>
+                        <span style={{ color: '#ef4444', fontWeight: 700 }}>−{Math.max(0, (1/effLev - 0.005)*100).toFixed(1)}% spot</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: '#475569' }}>Max loss today</span>
+                        <span style={{ color: '#ef4444', fontWeight: 700 }}>−${dailyLossLimit} hard stop</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* ── 4. EXECUTION DEFAULTS ──────────────────────── */}
+            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>4 · EXECUTION DEFAULTS</div>
+
+              {/* Order type */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <label style={{ color: '#64748b', fontSize: 12 }}>Default order type</label>
+                  <span style={{ fontSize: 11, color: orderType === 'Limit' ? '#22c55e' : '#eab308' }}>
+                    {orderType === 'Limit' ? '✓ Limit saves 0.035% fees per trade' : '⚠ Market pays taker fees — more expensive'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 8, overflow: 'hidden' }}>
+                  {(['Limit', 'Market'] as const).map(t => (
+                    <button key={t} onClick={() => setOrderType(t)} style={{
+                      flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700,
+                      background: orderType === t ? (t === 'Limit' ? '#22c55e22' : '#ef444422') : 'transparent',
+                      color: orderType === t ? (t === 'Limit' ? '#22c55e' : '#ef4444') : '#334155',
+                    }}>
+                      {t === 'Limit' ? '📋 Limit (maker 0.02%)' : '⚡ Market (taker 0.055%)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Leverage cap */}
+              <div style={{ marginBottom: 14, padding: 12, background: capAt5x ? '#16a34a11' : '#ef444411', border: `1px solid ${capAt5x ? '#16a34a33' : '#ef444433'}`, borderRadius: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: capAt5x ? '#22c55e' : '#ef4444' }}>
-                      {capAt5x ? `✓ Leverage hard-capped at ${MAX_LEVERAGE}×` : `⚠ Leverage cap OFF`}
+                    <div style={{ fontWeight: 700, fontSize: 13, color: capAt5x ? '#22c55e' : '#ef4444', marginBottom: 3 }}>
+                      {capAt5x ? `✓ Leverage hard cap: ${MAX_LEVERAGE}× max` : '⚠ Leverage cap OFF'}
                     </div>
-                    <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
+                    <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.5 }}>
                       {capAt5x
-                        ? `Engine recommendations above ${MAX_LEVERAGE}× are automatically reduced. Recommended for $2,000 accounts.`
-                        : 'Engine leverage recommendations apply directly. Max 100×. High risk.'}
+                        ? `Any engine recommendation above ${MAX_LEVERAGE}× is automatically reduced. Strongly recommended for accounts under $10,000.`
+                        : 'Engine leverages apply directly — up to 100×. Only disable if you are an experienced trader.'}
                     </div>
                   </div>
                   <button onClick={() => setCapAt5x(v => !v)} style={{
-                    padding: '8px 18px', marginLeft: 12, flexShrink: 0,
-                    background: capAt5x ? '#16a34a' : '#1e1e2e',
+                    padding: '8px 20px', marginLeft: 14, flexShrink: 0, borderRadius: 7, cursor: 'pointer', fontWeight: 800, fontSize: 13,
+                    background: capAt5x ? '#16a34a' : '#0a0a0f',
                     border: `1px solid ${capAt5x ? '#16a34a' : '#ef444444'}`,
-                    borderRadius: 6, color: capAt5x ? '#fff' : '#ef4444',
-                    cursor: 'pointer', fontWeight: 700, fontSize: 13,
+                    color: capAt5x ? '#fff' : '#ef4444',
                   }}>
                     {capAt5x ? 'ON' : 'OFF'}
                   </button>
                 </div>
               </div>
-            </div>
 
-            {/* API Keys */}
-            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8', marginBottom: 14 }}>BYBIT API KEYS</div>
-
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>API Key</label>
-                <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Paste your Bybit API key" style={{
-                  width: '100%', padding: '10px 12px', background: '#0a0a0f',
-                  border: `1px solid ${apiKey ? '#6366f144' : '#1e1e2e'}`,
-                  borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box',
-                }} />
-              </div>
-
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>API Secret</label>
-                <div style={{ position: 'relative' }}>
-                  <input type={showSecret ? 'text' : 'password'} value={apiSecret}
-                    onChange={e => setApiSecret(e.target.value)} placeholder="Paste your Bybit API secret"
-                    style={{
-                      width: '100%', padding: '10px 42px 10px 12px', background: '#0a0a0f',
-                      border: `1px solid ${apiSecret ? '#6366f144' : '#1e1e2e'}`,
-                      borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box',
-                    }} />
-                  <button onClick={() => setShowSecret(v => !v)} style={{
-                    position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                    background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 16,
-                  }}>{showSecret ? '🙈' : '👁'}</button>
+              {/* Force override */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#0a0a0f', borderRadius: 6 }}>
+                <div>
+                  <div style={{ fontSize: 13, color: forceTrade ? '#eab308' : '#64748b', fontWeight: 600 }}>
+                    {forceTrade ? '⚠ Funding rate check bypassed' : 'Funding rate gate: ON'}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#334155', marginTop: 2 }}>
+                    When ON, trades are blocked if funding rate exceeds ±0.10% (squeeze risk)
+                  </div>
                 </div>
+                <button onClick={() => setForceTrade(v => !v)} style={{
+                  padding: '7px 16px', marginLeft: 12, flexShrink: 0, borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 12,
+                  background: forceTrade ? '#eab30822' : '#0a0a0f',
+                  border: `1px solid ${forceTrade ? '#eab30844' : '#1e1e2e'}`,
+                  color: forceTrade ? '#eab308' : '#475569',
+                }}>
+                  {forceTrade ? 'BYPASS' : 'CHECK'}
+                </button>
               </div>
-
-              <div style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6, fontSize: 11, color: '#334155', marginBottom: 14 }}>
-                Keys are stored in your browser (localStorage) and sent over HTTPS with each trade. They are never stored server-side.
-                On Bybit, create a key with <strong style={{ color: '#475569' }}>Trade</strong> permission only — no withdrawal permission needed.
-              </div>
-
-              <button onClick={saveSettings} style={{
-                width: '100%', padding: '12px 0',
-                background: settingsSaved ? '#16a34a' : '#6366f1',
-                color: '#fff', border: 'none', borderRadius: 8,
-                cursor: 'pointer', fontWeight: 700, fontSize: 14,
-                transition: 'background 0.2s',
-              }}>
-                {settingsSaved ? '✓ Settings Saved' : 'Save Settings'}
-              </button>
             </div>
 
-            {/* Risk rules */}
+            {/* ── 5. AI ANALYSIS PROVIDER ────────────────────── */}
             <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8', marginBottom: 12 }}>RISK MANAGEMENT RULES</div>
+              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>5 · AI ANALYSIS PROVIDER</div>
+
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                {([
+                  { id: 'claude',   label: 'Claude',   sub: 'Haiku 4.5',  color: '#d97706', envVar: 'ANTHROPIC_API_KEY',  cost: '~$0.003' },
+                  { id: 'openai',   label: 'GPT-4o',   sub: 'mini',       color: '#10b981', envVar: 'OPENAI_API_KEY',      cost: '~$0.002' },
+                  { id: 'deepseek', label: 'DeepSeek', sub: 'Chat',       color: '#6366f1', envVar: 'DEEPSEEK_API_KEY',    cost: '~$0.0003' },
+                ] as { id: AiProvider; label: string; sub: string; color: string; envVar: string; cost: string }[]).map(p => (
+                  <button key={p.id} onClick={() => setAiProvider(p.id)} style={{
+                    flex: 1, padding: '10px 8px', borderRadius: 8, cursor: 'pointer', textAlign: 'center',
+                    background: aiProvider === p.id ? `${p.color}18` : '#0a0a0f',
+                    border: `1px solid ${aiProvider === p.id ? p.color : '#1e1e2e'}`,
+                    color: aiProvider === p.id ? p.color : '#334155',
+                  }}>
+                    <div style={{ fontWeight: 800, fontSize: 13 }}>{p.label}</div>
+                    <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{p.sub} · {p.cost}/req</div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Env var hint for selected provider */}
+              {(() => {
+                const info: Record<AiProvider, { envVar: string; cost: string; note: string }> = {
+                  claude:   { envVar: 'ANTHROPIC_API_KEY',  cost: '~$0.003/req', note: 'Fastest, most concise. Best for quick signal checks.' },
+                  openai:   { envVar: 'OPENAI_API_KEY',     cost: '~$0.002/req', note: 'GPT-4o mini — balanced quality and speed.' },
+                  deepseek: { envVar: 'DEEPSEEK_API_KEY',   cost: '~$0.0003/req', note: 'Cheapest option. Good quality, slightly slower.' },
+                };
+                const p = info[aiProvider];
+                return (
+                  <div style={{ padding: '10px 12px', background: '#0a0a0f', borderRadius: 6, fontSize: 11, lineHeight: 1.7 }}>
+                    <div style={{ color: '#94a3b8', marginBottom: 4 }}>
+                      Required Vercel env var: <code style={{ color: '#818cf8', background: '#1e1e2e', padding: '1px 6px', borderRadius: 3 }}>{p.envVar}</code>
+                    </div>
+                    <div style={{ color: '#475569' }}>Cost: {p.cost} · {p.note}</div>
+                    <div style={{ color: '#334155', marginTop: 4 }}>
+                      Add in Vercel → Project → Settings → Environment Variables → Redeploy
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* ── SAVE ───────────────────────────────────────── */}
+            <button onClick={saveSettings} style={{
+              width: '100%', padding: '14px 0',
+              background: settingsSaved ? '#16a34a' : '#6366f1',
+              color: '#fff', border: 'none', borderRadius: 10,
+              cursor: 'pointer', fontWeight: 800, fontSize: 15,
+              transition: 'background 0.2s',
+              boxShadow: settingsSaved ? '0 4px 16px #16a34a44' : '0 4px 16px #6366f144',
+            }}>
+              {settingsSaved ? '✓ All Settings Saved' : 'Save All Settings'}
+            </button>
+
+            {/* ── 6. RISK MANAGEMENT RULES ───────────────────── */}
+            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>6 · RISK RULES REFERENCE</div>
               {[
-                ['Max risk per trade', '1–2% of balance ($20–40 on $2,000)'],
-                ['Daily loss limit', 'Stop trading at −$80 loss. No exceptions.'],
-                ['Daily profit target', '$100 average — some days less, some more'],
-                ['Leverage', '3× to 5× maximum. Ignore engine recommendations above 5×.'],
-                ['Order type', 'Limit orders always — avoid paying taker fees'],
-                ['Position sizing', 'Risk $ ÷ Stop distance % = position size'],
-                ['Funding rate', 'Do not hold positions through 8hr funding timestamps'],
-                ['Max trades/day', '3–5 quality setups only. No overtrading.'],
-                ['Stop loss', 'Always set before entering. No exceptions.'],
-                ['BTC', 'Excluded — too volatile for rules-based stop placement'],
-              ].map(([rule, detail]) => (
-                <div key={rule} style={{ display: 'flex', gap: 10, padding: '7px 0', borderBottom: '1px solid #0f0f17' }}>
-                  <span style={{ color: '#6366f1', fontWeight: 700, fontSize: 12, minWidth: 130, flexShrink: 0 }}>{rule}</span>
-                  <span style={{ color: '#64748b', fontSize: 12 }}>{detail}</span>
+                { rule: 'Max risk/trade',      rec: '1–2%',           current: `${riskPct}%`, ok: riskPct <= 2,        detail: `= $${(accountSize * riskPct / 100).toFixed(0)} on your $${accountSize} account` },
+                { rule: 'Daily loss limit',    rec: '4% of account',  current: `$${dailyLossLimit}`, ok: dailyLossLimit <= accountSize * 0.05, detail: `Stop trading immediately at −$${dailyLossLimit}` },
+                { rule: 'Daily target',        rec: '5% of account',  current: `$${dailyTarget}`, ok: true,             detail: `Walk away after hitting +$${dailyTarget} — protect gains` },
+                { rule: 'Max trades/day',      rec: '3–5',            current: String(maxTrades),   ok: maxTrades <= 5,  detail: 'Quality > quantity. Overtrading kills accounts.' },
+                { rule: 'Leverage',            rec: '3–5× max',       current: capAt5x ? `Cap ${MAX_LEVERAGE}× ✓` : 'Cap OFF', ok: capAt5x, detail: 'Above 5× liquidation risk becomes severe on alts' },
+                { rule: 'Order type',          rec: 'Limit',          current: orderType,           ok: orderType === 'Limit', detail: 'Saves ~$3 per $6k position round-trip vs Market' },
+                { rule: 'Funding rate',        rec: 'Check before entry', current: forceTrade ? 'Bypassed' : 'Gated', ok: !forceTrade, detail: 'Longs pay when > +0.10%, shorts pay when < −0.10%' },
+                { rule: 'Stop loss',           rec: 'Always set',     current: '✓ Auto-attached',   ok: true,            detail: 'SL is required for every entry. No exceptions.' },
+                { rule: 'BTC correlation',     rec: 'Check alignment', current: '✓ Auto-scanned',   ok: true,            detail: 'Alts with BTC divergence carry extra reversal risk' },
+                { rule: 'Funding windows',     rec: 'Close before',   current: '8hr timestamps',    ok: true,            detail: 'Never hold through 00:00 08:00 16:00 UTC funding' },
+              ].map(({ rule, rec, current, ok, detail }) => (
+                <div key={rule} style={{ padding: '9px 0', borderBottom: '1px solid #0f0f17', display: 'grid', gridTemplateColumns: '120px 1fr', gap: 10, alignItems: 'start' }}>
+                  <div>
+                    <div style={{ color: '#64748b', fontSize: 11, fontWeight: 700 }}>{rule}</div>
+                    <div style={{ color: '#334155', fontSize: 10, marginTop: 1 }}>Rec: {rec}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: ok ? '#22c55e' : '#eab308', marginBottom: 2 }}>
+                      {ok ? '✓' : '⚠'} {current}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#334155', lineHeight: 1.4 }}>{detail}</div>
+                  </div>
                 </div>
               ))}
             </div>
