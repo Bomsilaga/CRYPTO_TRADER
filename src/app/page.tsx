@@ -1105,31 +1105,79 @@ export default function Home() {
                 )}
 
                 {/* Trade levels */}
-                <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: '#94a3b8' }}>TRADE LEVELS</div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                    {[
-                      { label: 'Entry', value: result.masterSignal.entry, color: '#e2e8f0' },
-                      { label: 'Stop Loss', value: result.masterSignal.stopLoss, color: '#ef4444' },
-                      { label: 'TP1 (50%)', value: result.masterSignal.tp1, color: '#22c55e' },
-                      { label: 'TP2 (25%)', value: result.masterSignal.tp2, color: '#22c55e' },
-                      { label: 'TP3 (25%)', value: result.masterSignal.tp3, color: '#22c55e' },
-                      { label: `Rec. Leverage ${result.masterSignal.leverage}×`, value: null, color: '#6366f1' },
-                    ].map(({ label, value, color }) => (
-                      <div key={label} style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6 }}>
-                        <div style={{ color: '#475569', fontSize: 11 }}>{label}</div>
-                        <div style={{ color, fontWeight: 700, fontSize: 14 }}>
-                          {value !== null ? `$${value.toFixed(4)}` : `Net R:R ${result.masterSignal.netRR.toFixed(2)}×`}
+                {(() => {
+                  const ms = result.masterSignal;
+                  const effLev = capAt5x
+                    ? Math.min((userLeverage || ms.leverage), MAX_LEVERAGE)
+                    : (userLeverage || ms.leverage);
+                  const MMR = 0.005;
+                  const liqDist = Math.max(0, 1 / effLev - MMR);
+                  const liqPrice = result.direction === 'LONG'
+                    ? ms.entry * (1 - liqDist)
+                    : ms.entry * (1 + liqDist);
+                  const slDist = Math.abs(ms.entry - ms.stopLoss) / ms.entry;
+                  // Danger: liq fires before SL
+                  const liqBeforeSL = result.direction === 'LONG'
+                    ? liqPrice > ms.stopLoss
+                    : liqPrice < ms.stopLoss;
+                  const maxSafeLev = Math.floor(1 / (slDist + MMR));
+                  const fmt = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
+                  return (
+                    <div style={{ padding: 16, background: '#111118', border: `1px solid ${liqBeforeSL ? '#ef444444' : '#1e1e2e'}`, borderRadius: 10 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: '#94a3b8' }}>TRADE LEVELS</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        {[
+                          { label: 'Entry',      value: ms.entry,    color: '#e2e8f0' },
+                          { label: 'Stop Loss',  value: ms.stopLoss, color: '#ef4444' },
+                          { label: 'TP1 (50%)', value: ms.tp1,      color: '#22c55e' },
+                          { label: 'TP2 (25%)', value: ms.tp2,      color: '#22c55e' },
+                          { label: 'TP3 (25%)', value: ms.tp3,      color: '#22c55e' },
+                          { label: `Net R:R`,   value: null,         color: '#6366f1' },
+                        ].map(({ label, value, color }) => (
+                          <div key={label} style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6 }}>
+                            <div style={{ color: '#475569', fontSize: 11 }}>{label}</div>
+                            <div style={{ color, fontWeight: 700, fontSize: 14 }}>
+                              {value !== null ? `$${fmt(value)}` : `${ms.netRR.toFixed(2)}×`}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Liquidation row */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                        <div style={{ padding: '8px 12px', background: liqBeforeSL ? '#ef444422' : '#0a0a0f', border: `1px solid ${liqBeforeSL ? '#ef444455' : 'transparent'}`, borderRadius: 6 }}>
+                          <div style={{ color: '#475569', fontSize: 11 }}>Liquidation @ {effLev}×</div>
+                          <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 14 }}>${fmt(liqPrice)}</div>
+                          <div style={{ color: '#475569', fontSize: 10, marginTop: 2 }}>{(liqDist * 100).toFixed(1)}% from entry · MMR 0.5%</div>
+                        </div>
+                        <div style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6 }}>
+                          <div style={{ color: '#475569', fontSize: 11 }}>Rec. Leverage</div>
+                          <div style={{ color: '#6366f1', fontWeight: 700, fontSize: 14 }}>{ms.leverage}×</div>
+                          <div style={{ color: '#475569', fontSize: 10, marginTop: 2 }}>Your setting: {effLev}×</div>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                  {result.masterSignal.leverageWarning && (
-                    <div style={{ marginTop: 10, padding: 10, background: '#eab30822', borderRadius: 6, color: '#eab308', fontSize: 12 }}>
-                      {result.masterSignal.leverageWarning}
+
+                      {/* Danger alert: liq before SL */}
+                      {liqBeforeSL && (
+                        <div style={{ marginTop: 10, padding: '10px 12px', background: '#ef444422', border: '1px solid #ef444455', borderRadius: 6 }}>
+                          <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 12, marginBottom: 4 }}>
+                            🚨 LIQUIDATION BEFORE STOP LOSS
+                          </div>
+                          <div style={{ color: '#fca5a5', fontSize: 12, lineHeight: 1.5 }}>
+                            At {effLev}× leverage, you get liquidated at ${fmt(liqPrice)} before your stop loss at ${fmt(ms.stopLoss)} triggers.
+                            Reduce leverage to <strong>{maxSafeLev}× or below</strong> for this SL to protect your position.
+                          </div>
+                        </div>
+                      )}
+
+                      {result.masterSignal.leverageWarning && (
+                        <div style={{ marginTop: 10, padding: 10, background: '#eab30822', borderRadius: 6, color: '#eab308', fontSize: 12 }}>
+                          {result.masterSignal.leverageWarning}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  );
+                })()}
 
                 {/* Structure */}
                 <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
