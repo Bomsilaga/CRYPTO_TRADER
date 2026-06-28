@@ -322,7 +322,7 @@ const POPULAR = [
   'DOGEUSDT', '1000SHIBUSDT', '1000PEPEUSDT', 'WIFUSDT',
   '1000BOMEUSDT', '1000FLOKIUSDT', '1000BONKUSDT',
   // ── L2 / rollups (MATIC → POL) ────────────────────────────────────────
-  'ARBUSDT', 'OPUSDT', 'STRKUSDT', 'POLUSDT', 'MNTUSDT', 'ZKUSDT',
+  'ARBUSDT', 'OPUSDT', 'STRKUSDT', 'POLUSDT', 'MNTUSDT',
   // ── Move / new L1 ─────────────────────────────────────────────────────
   'SUIUSDT', 'APTUSDT', 'SEIUSDT',
   // ── Cosmos / interchain ───────────────────────────────────────────────
@@ -330,15 +330,15 @@ const POPULAR = [
   // ── DeFi blue chips ───────────────────────────────────────────────────
   'LINKUSDT', 'AAVEUSDT', 'UNIUSDT', 'LDOUSDT', 'CRVUSDT', 'PENDLEUSDT', 'GRTUSDT',
   // ── AI / infra ────────────────────────────────────────────────────────
-  'TAOUSDT', 'RENDERUSDT', 'WLDUSDT', 'EIGENUSDT',
+  'TAOUSDT', 'RENDERUSDT', 'WLDUSDT',
   // ── Solana ecosystem ──────────────────────────────────────────────────
   'JUPUSDT', 'PYTHUSDT', 'JTOUSDT',
   // ── Bitcoin L2 / ecosystem ────────────────────────────────────────────
   'ORDIUSDT', 'STXUSDT', 'LTCUSDT',
   // ── Gaming / metaverse ────────────────────────────────────────────────
-  'SANDUSDT', 'AXSUSDT', 'GALAUSDT', 'MANAUSDT',
-  // ── Other high-vol / trending ─────────────────────────────────────────
-  'ENAUSDT', 'FILUSDT', 'ALTUSDT',
+  'SANDUSDT', 'AXSUSDT', 'GALAUSDT', 'MANAUSDT', 'APEUSDT',
+  // ── Established alts ──────────────────────────────────────────────────
+  'ENAUSDT', 'FILUSDT', 'ALGOUSDT', 'VETUSDT',
 ];
 
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
