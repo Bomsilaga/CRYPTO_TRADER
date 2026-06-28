@@ -106,15 +106,34 @@ interface TradeEntry {
   orderType: 'Market' | 'Limit';
   mode: 'paper' | 'live';
   timestamp: string;
+  timezone: string;
   score: number;
   confidence: number;
   bestSetup: string;
   netRR: number;
+  qty: number;
+  positionNotional: number;
+  marginUsed: number;
   status: 'open' | 'tp1' | 'tp2' | 'tp3' | 'sl' | 'manual';
   exitPrice?: number;
   pnlDollars?: number;
   orderId?: string;
 }
+
+const TIMEZONES = [
+  { label: 'UTC',                    value: 'UTC'                   },
+  { label: 'New York (EST/EDT)',      value: 'America/New_York'      },
+  { label: 'Chicago (CST/CDT)',       value: 'America/Chicago'       },
+  { label: 'Los Angeles (PST/PDT)',   value: 'America/Los_Angeles'   },
+  { label: 'London (GMT/BST)',        value: 'Europe/London'         },
+  { label: 'Frankfurt (CET/CEST)',    value: 'Europe/Berlin'         },
+  { label: 'Dubai (GST+4)',           value: 'Asia/Dubai'            },
+  { label: 'Singapore (SGT+8)',       value: 'Asia/Singapore'        },
+  { label: 'Tokyo (JST+9)',           value: 'Asia/Tokyo'            },
+  { label: 'Hong Kong (HKT+8)',       value: 'Asia/Hong_Kong'        },
+  { label: 'Melbourne (AEST/AEDT)',   value: 'Australia/Melbourne'   },
+  { label: 'Sydney (AEST/AEDT)',      value: 'Australia/Sydney'      },
+];
 
 /* ─── Risk Calculator ───────────────────────────────────────────────────── */
 
@@ -401,7 +420,8 @@ export default function Home() {
   const [dailyLossLimit, setDailyLossLimit] = useState(80);
   const [dailyTarget, setDailyTarget] = useState(100);
   const [maxTrades, setMaxTrades] = useState(5);
-  const [targetSpotPct, setTargetSpotPct] = useState(1); // expected spot move % per trade
+  const [targetSpotPct, setTargetSpotPct] = useState(1);
+  const [timezone, setTimezone] = useState('Australia/Melbourne');
 
   // Trade state
   const [riskPct, setRiskPct] = useState(1);
@@ -449,6 +469,7 @@ export default function Home() {
         if (s.dailyTarget)    setDailyTarget(s.dailyTarget);
         if (s.maxTrades)      setMaxTrades(s.maxTrades);
         if (s.targetSpotPct)  setTargetSpotPct(s.targetSpotPct);
+        if (s.timezone)       setTimezone(s.timezone);
         if (s.anthropicKey)   setAnthropicKey(s.anthropicKey);
         if (s.openaiKey)      setOpenaiKey(s.openaiKey);
         if (s.deepseekKey)    setDeepseekKey(s.deepseekKey);
@@ -460,7 +481,7 @@ export default function Home() {
     try {
       localStorage.setItem('4scans-settings', JSON.stringify({
         apiKey, apiSecret, liveMode, riskPct, orderType, capAt5x, aiProvider,
-        accountSize, dailyLossLimit, dailyTarget, maxTrades, targetSpotPct,
+        accountSize, dailyLossLimit, dailyTarget, maxTrades, targetSpotPct, timezone,
         anthropicKey, openaiKey, deepseekKey,
       }));
       setSettingsSaved(true);
@@ -690,12 +711,22 @@ export default function Home() {
 
       // Save to trade journal on success/paper
       if (data.paper || data.success) {
+        const ep    = result.masterSignal.entry;
+        const sl    = result.masterSignal.stopLoss;
+        const slDist = Math.abs(ep - sl) / ep;
+        const riskAmt = accountSize * riskPct / 100;
+        // qty: risk-based sizing — loss at SL equals riskAmt
+        const calcQty  = slDist > 0 ? riskAmt / (ep * slDist) : 0;
+        const qty      = data.qty ?? parseFloat(calcQty.toFixed(3));
+        const positionNotional = qty * ep;
+        const marginUsed       = positionNotional / effectiveLev;
+        const tzAbbr = new Date().toLocaleTimeString('en', { timeZoneName: 'short', timeZone: timezone }).split(' ').pop() ?? timezone;
         const entry: TradeEntry = {
           id: Date.now().toString(),
           symbol: result.symbol,
           direction: result.direction as 'LONG' | 'SHORT',
-          entry: result.masterSignal.entry,
-          stopLoss: result.masterSignal.stopLoss,
+          entry: ep,
+          stopLoss: sl,
           tp1: result.masterSignal.tp1,
           tp2: result.masterSignal.tp2,
           tp3: result.masterSignal.tp3,
@@ -703,11 +734,15 @@ export default function Home() {
           riskPct,
           orderType,
           mode: liveMode ? 'live' : 'paper',
-          timestamp: new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' }),
+          timestamp: new Date().toLocaleString('en-AU', { timeZone: timezone }),
+          timezone: tzAbbr,
           score: result.totalScore,
           confidence: result.confidence,
           bestSetup: result.bestSetup,
           netRR: result.masterSignal.netRR,
+          qty,
+          positionNotional,
+          marginUsed,
           status: 'open',
           orderId: data.orderId,
         };
@@ -1514,21 +1549,52 @@ export default function Home() {
                         </div>
                       )}
 
-                      {/* Levels grid */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 10, fontSize: 12 }}>
-                        {[
-                          { label: 'Entry', value: t.entry, color: '#e2e8f0' },
-                          { label: 'SL', value: t.stopLoss, color: '#ef4444' },
-                          { label: 'TP1', value: t.tp1, color: '#22c55e' },
-                        ].map(({ label, value, color }) => (
-                          <div key={label} style={{ padding: '6px 8px', background: '#0a0a0f', borderRadius: 6 }}>
-                            <div style={{ color: '#475569', fontSize: 10 }}>{label}</div>
-                            <div style={{ color, fontWeight: 600 }}>${value.toFixed(4)}</div>
-                          </div>
-                        ))}
-                      </div>
+                      {/* Levels + position grid */}
+                      {(() => {
+                        const MMR = 0.005;
+                        const liqDist = Math.max(0, 1 / t.leverage - MMR);
+                        const liqPrice = t.direction === 'LONG'
+                          ? t.entry * (1 - liqDist)
+                          : t.entry * (1 + liqDist);
+                        const fmt = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
+                        return (
+                          <>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 6, fontSize: 12 }}>
+                              {[
+                                { label: 'Entry',    value: t.entry,    color: '#e2e8f0' },
+                                { label: 'Stop Loss', value: t.stopLoss, color: '#ef4444' },
+                                { label: 'TP1',      value: t.tp1,      color: '#22c55e' },
+                              ].map(({ label, value, color }) => (
+                                <div key={label} style={{ padding: '6px 8px', background: '#0a0a0f', borderRadius: 6 }}>
+                                  <div style={{ color: '#475569', fontSize: 10 }}>{label}</div>
+                                  <div style={{ color, fontWeight: 600 }}>${fmt(value)}</div>
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 10, fontSize: 12 }}>
+                              <div style={{ padding: '6px 8px', background: '#0a0a0f', borderRadius: 6 }}>
+                                <div style={{ color: '#475569', fontSize: 10 }}>Position</div>
+                                <div style={{ color: '#e2e8f0', fontWeight: 600 }}>
+                                  {t.qty ? `${t.qty.toFixed(3)} ${t.symbol.replace('1000','').replace('USDT','')}` : '—'}
+                                </div>
+                                <div style={{ color: '#475569', fontSize: 10 }}>${t.positionNotional ? t.positionNotional.toFixed(0) : '—'} notional</div>
+                              </div>
+                              <div style={{ padding: '6px 8px', background: '#0a0a0f', borderRadius: 6 }}>
+                                <div style={{ color: '#475569', fontSize: 10 }}>Margin Used</div>
+                                <div style={{ color: '#818cf8', fontWeight: 600 }}>${t.marginUsed ? t.marginUsed.toFixed(2) : '—'}</div>
+                                <div style={{ color: '#475569', fontSize: 10 }}>{t.leverage}× leverage</div>
+                              </div>
+                              <div style={{ padding: '6px 8px', background: '#ef444411', border: '1px solid #ef444422', borderRadius: 6 }}>
+                                <div style={{ color: '#475569', fontSize: 10 }}>Liquidation</div>
+                                <div style={{ color: '#ef4444', fontWeight: 600 }}>${fmt(liqPrice)}</div>
+                                <div style={{ color: '#475569', fontSize: 10 }}>{(liqDist * 100).toFixed(1)}% from entry</div>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
 
-                      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: '#475569', marginBottom: isOpen ? 10 : 0 }}>
+                      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: '#475569', marginBottom: isOpen ? 10 : 0, flexWrap: 'wrap' }}>
                         <span>Score {t.score}/100</span>
                         <span>R:R {t.netRR.toFixed(2)}×</span>
                         <span>Risk {t.riskPct}%</span>
@@ -1537,7 +1603,9 @@ export default function Home() {
                             {t.pnlDollars >= 0 ? '+' : ''}${t.pnlDollars.toFixed(2)}
                           </span>
                         )}
-                        <span style={{ marginLeft: 'auto' }}>{t.timestamp}</span>
+                        <span style={{ marginLeft: 'auto' }}>
+                          {t.timestamp}{t.timezone ? ` ${t.timezone}` : ''}
+                        </span>
                       </div>
 
                       {/* Close buttons for open trades */}
@@ -1639,6 +1707,29 @@ export default function Home() {
                   ? '⚠ LIVE MODE active — real orders fire on Bybit with real money. Confirm API keys and risk limits below before trading.'
                   : 'Paper mode simulates every trade — no real funds used. Master the system here before switching live.'}
               </div>
+            </div>
+
+            {/* ── 1b. TIMEZONE ───────────────────────────────── */}
+            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 10 }}>1b · TIMEZONE</div>
+              <div style={{ marginBottom: 8, fontSize: 12, color: '#64748b' }}>
+                Used for trade timestamps and session times. Current time: <span style={{ color: '#e2e8f0' }}>
+                  {new Date().toLocaleTimeString('en', { timeZone: timezone, hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}
+                </span>
+              </div>
+              <select
+                value={timezone}
+                onChange={e => setTimezone(e.target.value)}
+                style={{
+                  width: '100%', padding: '10px 12px', background: '#0a0a0f',
+                  border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0',
+                  fontSize: 13, outline: 'none', cursor: 'pointer',
+                }}
+              >
+                {TIMEZONES.map(tz => (
+                  <option key={tz.value} value={tz.value}>{tz.label}</option>
+                ))}
+              </select>
             </div>
 
             {/* ── 2. BYBIT API KEYS ──────────────────────────── */}
