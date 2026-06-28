@@ -778,7 +778,7 @@ export default function Home() {
   });
 
   return (
-    <main style={{ maxWidth: 760, margin: '0 auto', padding: '0 0 40px' }}>
+    <main style={{ maxWidth: 920, margin: '0 auto', padding: '0 0 40px' }}>
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div style={{ padding: '20px 16px 0', marginBottom: 0 }}>
@@ -1530,7 +1530,7 @@ export default function Home() {
                 {(() => {
                   const CARD_ACCENT = ['#6366f1','#f59e0b','#06b6d4','#a855f7','#ec4899','#10b981','#f97316','#84cc16'];
                   return (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 14 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
                 {trades.map((t, tIdx) => {
                   const accentColor = CARD_ACCENT[tIdx % CARD_ACCENT.length];
                   const dirColor = t.direction === 'LONG' ? '#22c55e' : '#ef4444';
@@ -1566,11 +1566,12 @@ export default function Home() {
 
                   return (
                     <div key={t.id} style={{
-                      padding: 14, background: '#111118',
+                      padding: 12, background: '#111118',
                       border: `1px solid ${accentColor}44`,
                       borderLeft: `4px solid ${accentColor}`,
                       borderRadius: 10,
                       boxShadow: isOpen ? `0 0 18px ${accentColor}18` : 'none',
+                      minWidth: 0,
                     }}>
                       {/* Header row */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
