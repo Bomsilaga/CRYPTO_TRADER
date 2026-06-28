@@ -90,6 +90,30 @@ interface TradeResult {
   };
 }
 
+interface TradeEntry {
+  id: string;
+  symbol: string;
+  direction: 'LONG' | 'SHORT';
+  entry: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  leverage: number;
+  riskPct: number;
+  orderType: 'Market' | 'Limit';
+  mode: 'paper' | 'live';
+  timestamp: string;
+  score: number;
+  confidence: number;
+  bestSetup: string;
+  netRR: number;
+  status: 'open' | 'tp1' | 'tp2' | 'tp3' | 'sl' | 'manual';
+  exitPrice?: number;
+  pnlDollars?: number;
+  orderId?: string;
+}
+
 /* ─── Risk Calculator ───────────────────────────────────────────────────── */
 
 function RiskCalculator() {
@@ -242,7 +266,8 @@ function ScoreBar({ score }: { score: number }) {
 
 /* ─── Main component ─────────────────────────────────────────────────────── */
 
-type Tab = 'scan' | 'calc' | 'settings';
+type Tab = 'scan' | 'calc' | 'trades' | 'settings';
+const MAX_LEVERAGE = 5; // hard cap — override engine recommendations
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>('scan');
@@ -268,6 +293,15 @@ export default function Home() {
   const [forceTrade, setForceTrade] = useState(false);
   const [tradeLoading, setTradeLoading] = useState(false);
   const [tradeResult, setTradeResult] = useState<TradeResult | null>(null);
+  const [capAt5x, setCapAt5x] = useState(true); // hard cap leverage at 5×
+
+  // Trade journal
+  const [trades, setTrades] = useState<TradeEntry[]>([]);
+
+  // AI explanation
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiExplanation, setAiExplanation] = useState<string | null>(null);
+  const [aiWarnings, setAiWarnings] = useState<string[]>([]);
 
   // Load settings from localStorage
   useEffect(() => {
@@ -280,16 +314,46 @@ export default function Home() {
         if (typeof s.liveMode === 'boolean') setLiveMode(s.liveMode);
         if (s.riskPct) setRiskPct(s.riskPct);
         if (s.orderType) setOrderType(s.orderType);
+        if (typeof s.capAt5x === 'boolean') setCapAt5x(s.capAt5x);
       }
     } catch { /* ignore */ }
   }, []);
 
   function saveSettings() {
     try {
-      localStorage.setItem('4scans-settings', JSON.stringify({ apiKey, apiSecret, liveMode, riskPct, orderType }));
+      localStorage.setItem('4scans-settings', JSON.stringify({ apiKey, apiSecret, liveMode, riskPct, orderType, capAt5x }));
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch { /* ignore */ }
+  }
+
+  // Load trade journal
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('4scans-trades');
+      if (saved) setTrades(JSON.parse(saved));
+    } catch { /* ignore */ }
+  }, []);
+
+  function saveTrades(updated: TradeEntry[]) {
+    setTrades(updated);
+    try { localStorage.setItem('4scans-trades', JSON.stringify(updated)); } catch { /* ignore */ }
+  }
+
+  function updateTradeStatus(id: string, status: TradeEntry['status'], exitPrice?: number) {
+    const updated = trades.map(t => {
+      if (t.id !== id) return t;
+      const pnlDollars = exitPrice
+        ? (t.direction === 'LONG' ? exitPrice - t.entry : t.entry - exitPrice)
+          / t.entry * t.entry * t.leverage * (t.riskPct / 100) / ((Math.abs(t.entry - t.stopLoss) / t.entry) * t.leverage)
+        : undefined;
+      return { ...t, status, exitPrice, pnlDollars };
+    });
+    saveTrades(updated);
+  }
+
+  function deleteTrade(id: string) {
+    saveTrades(trades.filter(t => t.id !== id));
   }
 
   // Poll for latest autoscan result every 60s
@@ -310,12 +374,17 @@ export default function Home() {
     setLoading(true);
     setResult(null);
     setTradeResult(null);
+    setAiExplanation(null);
+    setAiWarnings([]);
     setTab('scan');
     try {
       const res = await fetch(`/api/scan?symbol=${sym.toUpperCase()}`);
       const data = await res.json() as ScanResult;
       setResult(data);
-      if (data?.masterSignal?.leverage) setUserLeverage(data.masterSignal.leverage);
+      // Apply leverage cap when pre-filling
+      if (data?.masterSignal?.leverage) {
+        setUserLeverage(capAt5x ? Math.min(data.masterSignal.leverage, MAX_LEVERAGE) : data.masterSignal.leverage);
+      }
     } catch (e) {
       setResult({ ok: false, error: String(e) } as ScanResult);
     } finally {
@@ -323,10 +392,54 @@ export default function Home() {
     }
   }
 
+  async function getAiExplain() {
+    if (!result?.ok) return;
+    setAiLoading(true);
+    setAiExplanation(null);
+    setAiWarnings([]);
+    try {
+      const res = await fetch('/api/ai-explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(result),
+      });
+      const data = await res.json() as { explanation?: string; error?: string };
+      if (data.error) { setAiExplanation(`Error: ${data.error}`); return; }
+      setAiExplanation(data.explanation ?? '');
+
+      // Flag misalignments between deep data and signal direction
+      const warnings: string[] = [];
+      const d = result.deep;
+      const dir = result.direction;
+      if (dir === 'LONG' && !d.vwapAbove) warnings.push('VWAP is ABOVE price — longs trading against VWAP bias');
+      if (dir === 'SHORT' && d.vwapAbove) warnings.push('VWAP is BELOW price — shorts trading against VWAP bias');
+      if (dir === 'LONG' && d.rsi > 70) warnings.push(`RSI ${d.rsi.toFixed(1)} is overbought — entering longs here is high risk`);
+      if (dir === 'SHORT' && d.rsi < 30) warnings.push(`RSI ${d.rsi.toFixed(1)} is oversold — entering shorts here is high risk`);
+      if (dir === 'LONG' && d.macdBear && !d.macdBull) warnings.push('MACD is bearish — momentum not aligned with LONG direction');
+      if (dir === 'SHORT' && d.macdBull && !d.macdBear) warnings.push('MACD is bullish — momentum not aligned with SHORT direction');
+      if (dir === 'LONG' && d.volRatio < 0.8) warnings.push(`Volume ${d.volRatio.toFixed(1)}× below average — no institutional participation yet`);
+      if (dir === 'SHORT' && d.volRatio < 0.8) warnings.push(`Volume ${d.volRatio.toFixed(1)}× below average — no institutional participation yet`);
+      if (!d.hasBOS) warnings.push('No Break of Structure confirmed — entry lacks structural validity');
+      if (!d.hasOB && !d.hasFVG) warnings.push('Neither Order Block nor FVG present — no ICT confluence zone identified');
+      if (d.wyckoffPhase?.includes('ACCUMULATION') && dir === 'SHORT') warnings.push('Wyckoff shows ACCUMULATION — shorting into potential demand zone');
+      if (d.wyckoffPhase?.includes('DISTRIBUTION') && dir === 'LONG') warnings.push('Wyckoff shows DISTRIBUTION — buying into potential supply zone');
+      setAiWarnings(warnings);
+    } catch (e) {
+      setAiExplanation(`Error: ${String(e)}`);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   async function enterTrade() {
     if (!result?.ok || result.direction === 'NEUTRAL') return;
     setTradeLoading(true);
     setTradeResult(null);
+
+    // Apply leverage cap
+    const rawLev = typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage;
+    const effectiveLev = capAt5x ? Math.min(rawLev, MAX_LEVERAGE) : rawLev;
+
     try {
       const res = await fetch('/api/trade', {
         method: 'POST',
@@ -339,12 +452,12 @@ export default function Home() {
           tp1: result.masterSignal.tp1,
           tp2: result.masterSignal.tp2,
           tp3: result.masterSignal.tp3,
-          leverage: typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage,
+          leverage: effectiveLev,
           riskPct,
           style: result.bestSetup,
           orderType,
           force: forceTrade,
-          userLeverage: typeof userLeverage === 'number' ? userLeverage : undefined,
+          userLeverage: effectiveLev,
           ...(apiKey && { apiKey }),
           ...(apiSecret && { apiSecret }),
           liveMode,
@@ -352,6 +465,32 @@ export default function Home() {
       });
       const data = await res.json() as TradeResult;
       setTradeResult(data);
+
+      // Save to trade journal on success/paper
+      if (data.paper || data.success) {
+        const entry: TradeEntry = {
+          id: Date.now().toString(),
+          symbol: result.symbol,
+          direction: result.direction as 'LONG' | 'SHORT',
+          entry: result.masterSignal.entry,
+          stopLoss: result.masterSignal.stopLoss,
+          tp1: result.masterSignal.tp1,
+          tp2: result.masterSignal.tp2,
+          tp3: result.masterSignal.tp3,
+          leverage: effectiveLev,
+          riskPct,
+          orderType,
+          mode: liveMode ? 'live' : 'paper',
+          timestamp: new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' }),
+          score: result.totalScore,
+          confidence: result.confidence,
+          bestSetup: result.bestSetup,
+          netRR: result.masterSignal.netRR,
+          status: 'open',
+          orderId: data.orderId,
+        };
+        saveTrades([entry, ...trades]);
+      }
     } catch (e) {
       setTradeResult({ error: String(e) });
     } finally {
@@ -399,8 +538,11 @@ export default function Home() {
         {/* Tabs */}
         <div style={{ display: 'flex', borderBottom: '1px solid #1e1e2e', marginBottom: 0 }}>
           <button style={TAB_STYLE(tab === 'scan')} onClick={() => setTab('scan')}>📡 Scanner</button>
-          <button style={TAB_STYLE(tab === 'calc')} onClick={() => setTab('calc')}>📐 Calculator</button>
-          <button style={TAB_STYLE(tab === 'settings')} onClick={() => setTab('settings')}>⚙️ Settings</button>
+          <button style={TAB_STYLE(tab === 'calc')} onClick={() => setTab('calc')}>📐 Calc</button>
+          <button style={TAB_STYLE(tab === 'trades')} onClick={() => setTab('trades')}>
+            📒 Trades{trades.length > 0 ? ` (${trades.length})` : ''}
+          </button>
+          <button style={TAB_STYLE(tab === 'settings')} onClick={() => setTab('settings')}>⚙️</button>
         </div>
       </div>
 
@@ -593,6 +735,38 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* ── AI DEEP ANALYSIS ────────────────────────────────── */}
+                <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: aiExplanation || aiWarnings.length > 0 ? 12 : 0 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8' }}>🤖 AI DEEP ANALYSIS</span>
+                    <button onClick={getAiExplain} disabled={aiLoading} style={{
+                      padding: '6px 16px', background: aiLoading ? '#1e1e2e' : '#6366f122',
+                      border: '1px solid #6366f144', borderRadius: 6,
+                      color: aiLoading ? '#475569' : '#818cf8',
+                      cursor: aiLoading ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 700,
+                    }}>
+                      {aiLoading ? 'Analysing…' : aiExplanation ? 'Refresh' : 'Get Analysis'}
+                    </button>
+                  </div>
+
+                  {/* Misalignment warnings */}
+                  {aiWarnings.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                      {aiWarnings.map((w, i) => (
+                        <div key={i} style={{ padding: '7px 10px', background: '#eab30822', border: '1px solid #eab30844', borderRadius: 6, color: '#eab308', fontSize: 12 }}>
+                          ⚠ {w}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {aiExplanation && (
+                    <div style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {aiExplanation}
+                    </div>
+                  )}
+                </div>
+
                 {/* ── TRADE EXECUTION ─────────────────────────────────── */}
                 {canTrade && (
                   <div style={{
@@ -613,12 +787,21 @@ export default function Home() {
                       </div>
                       <div>
                         <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 4 }}>
-                          Leverage (engine rec: {result.masterSignal.leverage}×)
+                          Leverage
+                          {capAt5x
+                            ? <span style={{ color: '#22c55e', marginLeft: 6 }}>capped at {MAX_LEVERAGE}× ✓</span>
+                            : <span style={{ color: '#ef4444', marginLeft: 6 }}>cap OFF — engine rec: {result.masterSignal.leverage}×</span>}
                         </label>
-                        <input type="number" min={1} max={100} value={userLeverage}
-                          onChange={e => setUserLeverage(parseInt(e.target.value) || '')}
-                          placeholder={String(result.masterSignal.leverage)}
-                          style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
+                        <input type="number" min={1} max={capAt5x ? MAX_LEVERAGE : 100}
+                          value={capAt5x ? Math.min(typeof userLeverage === 'number' ? userLeverage : MAX_LEVERAGE, MAX_LEVERAGE) : userLeverage}
+                          onChange={e => {
+                            const v = parseInt(e.target.value) || 1;
+                            setUserLeverage(capAt5x ? Math.min(v, MAX_LEVERAGE) : v);
+                          }}
+                          placeholder={String(capAt5x ? Math.min(result.masterSignal.leverage, MAX_LEVERAGE) : result.masterSignal.leverage)}
+                          style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f',
+                            border: `1px solid ${capAt5x ? '#16a34a44' : '#ef444444'}`,
+                            borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
                       </div>
                     </div>
 
@@ -738,6 +921,133 @@ export default function Home() {
         {/* ══════════════════ CALCULATOR TAB ══════════════════ */}
         {tab === 'calc' && <RiskCalculator />}
 
+        {/* ══════════════════ TRADES TAB ══════════════════ */}
+        {tab === 'trades' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {trades.length === 0 ? (
+              <div style={{ padding: 32, textAlign: 'center', color: '#475569', background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>📒</div>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>No trades logged yet</div>
+                <div style={{ fontSize: 13 }}>Enter a trade from the Scanner tab and it will appear here.</div>
+              </div>
+            ) : (
+              <>
+                {/* Summary row */}
+                {(() => {
+                  const closed = trades.filter(t => t.status !== 'open');
+                  const wins = closed.filter(t => ['tp1','tp2','tp3'].includes(t.status)).length;
+                  const totalPnl = trades.reduce((s, t) => s + (t.pnlDollars ?? 0), 0);
+                  const openCount = trades.filter(t => t.status === 'open').length;
+                  return (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                      {[
+                        { label: 'Total', value: trades.length },
+                        { label: 'Open', value: openCount, color: '#6366f1' },
+                        { label: 'Win rate', value: closed.length ? `${Math.round(wins/closed.length*100)}%` : '—', color: '#22c55e' },
+                        { label: 'Net P&L', value: `$${totalPnl.toFixed(0)}`, color: totalPnl >= 0 ? '#22c55e' : '#ef4444' },
+                      ].map(({ label, value, color }) => (
+                        <div key={label} style={{ padding: '10px 12px', background: '#111118', border: '1px solid #1e1e2e', borderRadius: 8, textAlign: 'center' }}>
+                          <div style={{ color: '#475569', fontSize: 11 }}>{label}</div>
+                          <div style={{ color: color ?? '#e2e8f0', fontWeight: 700, fontSize: 16 }}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {/* Trade list */}
+                {trades.map(t => {
+                  const dirColor = t.direction === 'LONG' ? '#22c55e' : '#ef4444';
+                  const statusColor: Record<string, string> = { open: '#6366f1', tp1: '#22c55e', tp2: '#22c55e', tp3: '#22c55e', sl: '#ef4444', manual: '#94a3b8' };
+                  const isOpen = t.status === 'open';
+                  return (
+                    <div key={t.id} style={{ padding: 14, background: '#111118', border: `1px solid ${isOpen ? '#1e2e4e' : '#1e1e2e'}`, borderRadius: 10 }}>
+                      {/* Header row */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                        <div>
+                          <span style={{ fontWeight: 800, fontSize: 15 }}>{t.symbol}</span>
+                          <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700, background: `${dirColor}22`, color: dirColor }}>
+                            {t.direction === 'LONG' ? '▲' : '▼'} {t.direction}
+                          </span>
+                          <span style={{ marginLeft: 6, padding: '2px 8px', borderRadius: 4, fontSize: 11, background: '#1e1e2e', color: '#64748b' }}>
+                            {t.mode.toUpperCase()} · {t.leverage}× · {t.bestSetup}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700, background: `${statusColor[t.status]}22`, color: statusColor[t.status] }}>
+                            {t.status.toUpperCase()}
+                          </span>
+                          <button onClick={() => deleteTrade(t.id)} style={{ background: 'none', border: 'none', color: '#334155', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+                        </div>
+                      </div>
+
+                      {/* Levels */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 10, fontSize: 12 }}>
+                        {[
+                          { label: 'Entry', value: t.entry, color: '#e2e8f0' },
+                          { label: 'SL', value: t.stopLoss, color: '#ef4444' },
+                          { label: 'TP1', value: t.tp1, color: '#22c55e' },
+                        ].map(({ label, value, color }) => (
+                          <div key={label} style={{ padding: '6px 8px', background: '#0a0a0f', borderRadius: 6 }}>
+                            <div style={{ color: '#475569', fontSize: 10 }}>{label}</div>
+                            <div style={{ color, fontWeight: 600 }}>${value.toFixed(4)}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: '#475569', marginBottom: isOpen ? 10 : 0 }}>
+                        <span>Score {t.score}/100</span>
+                        <span>R:R {t.netRR.toFixed(2)}×</span>
+                        <span>Risk {t.riskPct}%</span>
+                        {t.pnlDollars !== undefined && (
+                          <span style={{ color: t.pnlDollars >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>
+                            {t.pnlDollars >= 0 ? '+' : ''}${t.pnlDollars.toFixed(2)}
+                          </span>
+                        )}
+                        <span style={{ marginLeft: 'auto' }}>{t.timestamp}</span>
+                      </div>
+
+                      {/* Close buttons for open trades */}
+                      {isOpen && (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {(['tp1', 'tp2', 'tp3'] as const).map(tp => (
+                            <button key={tp} onClick={() => updateTradeStatus(t.id, tp, t[tp])} style={{
+                              padding: '5px 12px', background: '#16a34a22', border: '1px solid #16a34a44',
+                              borderRadius: 6, color: '#22c55e', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                            }}>
+                              Hit {tp.toUpperCase()} (${t[tp].toFixed(3)})
+                            </button>
+                          ))}
+                          <button onClick={() => updateTradeStatus(t.id, 'sl', t.stopLoss)} style={{
+                            padding: '5px 12px', background: '#ef444422', border: '1px solid #ef444444',
+                            borderRadius: 6, color: '#ef4444', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                          }}>
+                            Stopped Out (${t.stopLoss.toFixed(3)})
+                          </button>
+                          <button onClick={() => updateTradeStatus(t.id, 'manual')} style={{
+                            padding: '5px 12px', background: '#1e1e2e', border: '1px solid #1e1e2e',
+                            borderRadius: 6, color: '#64748b', cursor: 'pointer', fontSize: 12,
+                          }}>
+                            Manual Close
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Clear all */}
+                <button onClick={() => { if (confirm('Clear all trade history?')) saveTrades([]); }} style={{
+                  padding: '10px 0', background: 'none', border: '1px solid #1e1e2e',
+                  borderRadius: 8, color: '#334155', cursor: 'pointer', fontSize: 13,
+                }}>
+                  Clear all trades
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         {/* ══════════════════ SETTINGS TAB ══════════════════ */}
         {tab === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -792,6 +1102,31 @@ export default function Home() {
               </div>
               <div style={{ fontSize: 11, color: '#334155', padding: '6px 10px', background: '#0a0a0f', borderRadius: 6 }}>
                 Limit orders cost 0.02% (maker) vs 0.055% (taker) — saves $2–3 per $6k position. Always use Limit unless urgency requires Market.
+              </div>
+
+              {/* 5× leverage cap toggle */}
+              <div style={{ marginTop: 14, padding: 12, background: capAt5x ? '#16a34a11' : '#ef444411', border: `1px solid ${capAt5x ? '#16a34a44' : '#ef444444'}`, borderRadius: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: capAt5x ? '#22c55e' : '#ef4444' }}>
+                      {capAt5x ? `✓ Leverage hard-capped at ${MAX_LEVERAGE}×` : `⚠ Leverage cap OFF`}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#475569', marginTop: 3 }}>
+                      {capAt5x
+                        ? `Engine recommendations above ${MAX_LEVERAGE}× are automatically reduced. Recommended for $2,000 accounts.`
+                        : 'Engine leverage recommendations apply directly. Max 100×. High risk.'}
+                    </div>
+                  </div>
+                  <button onClick={() => setCapAt5x(v => !v)} style={{
+                    padding: '8px 18px', marginLeft: 12, flexShrink: 0,
+                    background: capAt5x ? '#16a34a' : '#1e1e2e',
+                    border: `1px solid ${capAt5x ? '#16a34a' : '#ef444444'}`,
+                    borderRadius: 6, color: capAt5x ? '#fff' : '#ef4444',
+                    cursor: 'pointer', fontWeight: 700, fontSize: 13,
+                  }}>
+                    {capAt5x ? 'ON' : 'OFF'}
+                  </button>
+                </div>
               </div>
             </div>
 

@@ -178,11 +178,18 @@ export async function POST(req: NextRequest) {
     });
 
     // ── GET BALANCE ──────────────────────────────────────────────────────
-    const walletRes = await bybitRequest('GET', '/v5/account/wallet-balance?accountType=UNIFIED', {});
-    const coins = walletRes?.result?.list?.[0]?.coin ?? [];
-    const usdtCoin = (coins as Record<string, string>[]).find((c) => c.coin === 'USDT');
-    const balance = parseFloat(usdtCoin?.availableToWithdraw ?? '0');
-    if (balance === 0) return NextResponse.json({ error: 'No USDT balance found' }, { status: 400 });
+    // Try UNIFIED first, fall back to CONTRACT (classic account type)
+    let balance = 0;
+    for (const accountType of ['UNIFIED', 'CONTRACT']) {
+      const walletRes = await bybitRequest('GET', `/v5/account/wallet-balance?accountType=${accountType}`, {});
+      const coins = walletRes?.result?.list?.[0]?.coin ?? [];
+      const usdtCoin = (coins as Record<string, string>[]).find((c: Record<string, string>) => c.coin === 'USDT');
+      balance = parseFloat(usdtCoin?.availableToWithdraw ?? usdtCoin?.walletBalance ?? '0');
+      if (balance > 0) break;
+    }
+    if (balance === 0) return NextResponse.json({
+      error: 'No USDT balance found. Check: (1) API key has Read permission, (2) account has USDT balance, (3) correct API key entered in Settings.',
+    }, { status: 400 });
 
     const riskAmt = balance * (riskPct / 100);
     const slDist  = Math.abs(entry - stopLoss);
