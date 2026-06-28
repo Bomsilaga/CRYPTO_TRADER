@@ -275,14 +275,14 @@ const POPULAR = [
   'SUIUSDT', 'APTUSDT', 'INJUSDT', 'NEARUSDT', 'SEIUSDT', 'TIAUSDT', 'TONUSDT',
   // DeFi blue chips
   'LINKUSDT', 'AAVEUSDT', 'UNIUSDT', 'LDOUSDT', 'GRTUSDT',
-  // AI / infra / RWA
-  'RENDERUSDT', 'FETUSDT', 'WLDUSDT',
+  // AI / infra
+  'TAOUSDT', 'RNDRUSDT', 'WLDUSDT',
   // Solana ecosystem
   'JUPUSDT', 'PYTHUSDT', 'JTOUSDT',
   // Bitcoin ecosystem
   'ORDIUSDT', 'LTCUSDT',
   // Other vol plays
-  'FILUSDT', 'GMXUSDT', 'KASUSDT',
+  'FILUSDT', 'SANDUSDT', 'AXSUSDT',
 ];
 
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
@@ -335,6 +335,12 @@ export default function Home() {
   const [liveMode, setLiveMode] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
+  // AI provider API keys (stored in localStorage, sent with AI requests)
+  const [anthropicKey, setAnthropicKey] = useState('');
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [deepseekKey, setDeepseekKey] = useState('');
+  const [showAiKeys, setShowAiKeys] = useState(false);
+
   // Account & risk
   const [accountSize, setAccountSize] = useState(2000);
   const [dailyLossLimit, setDailyLossLimit] = useState(80);
@@ -381,6 +387,9 @@ export default function Home() {
         if (s.dailyTarget)    setDailyTarget(s.dailyTarget);
         if (s.maxTrades)      setMaxTrades(s.maxTrades);
         if (s.targetSpotPct)  setTargetSpotPct(s.targetSpotPct);
+        if (s.anthropicKey)   setAnthropicKey(s.anthropicKey);
+        if (s.openaiKey)      setOpenaiKey(s.openaiKey);
+        if (s.deepseekKey)    setDeepseekKey(s.deepseekKey);
       }
     } catch { /* ignore */ }
   }, []);
@@ -390,6 +399,7 @@ export default function Home() {
       localStorage.setItem('4scans-settings', JSON.stringify({
         apiKey, apiSecret, liveMode, riskPct, orderType, capAt5x, aiProvider,
         accountSize, dailyLossLimit, dailyTarget, maxTrades, targetSpotPct,
+        anthropicKey, openaiKey, deepseekKey,
       }));
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
@@ -476,12 +486,18 @@ export default function Home() {
     setAiExplanation(null);
     setAiWarnings([]);
     try {
+      const aiKeyMap: Record<AiProvider, string> = {
+        claude:   anthropicKey,
+        openai:   openaiKey,
+        deepseek: deepseekKey,
+      };
       const res = await fetch('/api/ai-explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...result,
           provider: aiProvider,
+          clientApiKey: aiKeyMap[aiProvider] || undefined,
           btcDirection: btcResult?.direction,
           btcScore: btcResult?.totalScore,
           btcConfidence: btcResult?.confidence,
@@ -1307,6 +1323,34 @@ export default function Home() {
             <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>3 · ACCOUNT & RISK LIMITS</div>
 
+              {/* Expected ROI per trade — top of section for visibility */}
+              <div style={{ marginBottom: 14, padding: 12, background: '#0d0d16', border: '1px solid #6366f133', borderRadius: 8 }}>
+                <label style={{ display: 'block', fontWeight: 700, fontSize: 12, color: '#818cf8', marginBottom: 8 }}>
+                  Target spot move per trade (ROI %) — used in position math below
+                </label>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {[0.5, 0.75, 1, 1.5, 2, 3].map(p => (
+                    <button key={p} onClick={() => setTargetSpotPct(p)} style={{
+                      padding: '7px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700,
+                      background: targetSpotPct === p ? '#6366f1' : '#111118',
+                      color: targetSpotPct === p ? '#fff' : '#475569',
+                    }}>{p}%</button>
+                  ))}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 4 }}>
+                    <span style={{ color: '#334155', fontSize: 11 }}>custom:</span>
+                    <input type="number" min={0.1} max={10} step={0.1} value={targetSpotPct}
+                      onChange={e => setTargetSpotPct(parseFloat(e.target.value) || 1)}
+                      style={{ width: 64, padding: '7px 8px', background: '#111118', border: '1px solid #6366f133', borderRadius: 6, color: '#818cf8', outline: 'none', fontSize: 13, textAlign: 'center', fontWeight: 700 }} />
+                    <span style={{ color: '#334155', fontSize: 11 }}>%</span>
+                  </div>
+                </div>
+                <div style={{ marginTop: 8, fontSize: 11, color: '#475569' }}>
+                  At {capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5}× leverage: <span style={{ color: '#818cf8', fontWeight: 700 }}>{(targetSpotPct * (capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5)).toFixed(1)}% ROI on margin</span>
+                  {' '}· <span style={{ color: '#22c55e' }}>+${(accountSize * targetSpotPct * (capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5) / 100).toFixed(0)} gross</span>
+                  {' '}per trade on ${accountSize.toLocaleString()} account
+                </div>
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                 {/* Account size */}
                 <div>
@@ -1361,26 +1405,6 @@ export default function Home() {
                       color: maxTrades === n ? (n <= 5 ? '#22c55e' : '#ef4444') : '#334155',
                     }}>{n}</button>
                   ))}
-                </div>
-              </div>
-
-              {/* Expected spot move / ROI per trade */}
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', fontSize: 11, marginBottom: 6 }}>
-                  <span style={{ color: '#64748b' }}>Expected spot move per trade (%)</span>
-                  <span style={{ color: '#334155', marginLeft: 6 }}>· rec: 0.5–1.5% realistic target</span>
-                </label>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  {[0.5, 0.75, 1, 1.5, 2].map(p => (
-                    <button key={p} onClick={() => setTargetSpotPct(p)} style={{
-                      padding: '6px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-                      background: targetSpotPct === p ? '#6366f133' : '#0a0a0f',
-                      color: targetSpotPct === p ? '#818cf8' : '#334155',
-                    }}>{p}%</button>
-                  ))}
-                  <input type="number" min={0.1} max={10} step={0.1} value={targetSpotPct}
-                    onChange={e => setTargetSpotPct(parseFloat(e.target.value) || 1)}
-                    style={{ width: 58, padding: '6px 8px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#94a3b8', outline: 'none', fontSize: 12, textAlign: 'center' }} />
                 </div>
               </div>
 
@@ -1521,12 +1545,13 @@ export default function Home() {
             <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>5 · AI ANALYSIS PROVIDER</div>
 
-              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              {/* Provider selector */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
                 {([
-                  { id: 'claude',   label: 'Claude',   sub: 'Haiku 4.5',  color: '#d97706', envVar: 'ANTHROPIC_API_KEY',  cost: '~$0.003' },
-                  { id: 'openai',   label: 'GPT-4o',   sub: 'mini',       color: '#10b981', envVar: 'OPENAI_API_KEY',      cost: '~$0.002' },
-                  { id: 'deepseek', label: 'DeepSeek', sub: 'Chat',       color: '#6366f1', envVar: 'DEEPSEEK_API_KEY',    cost: '~$0.0003' },
-                ] as { id: AiProvider; label: string; sub: string; color: string; envVar: string; cost: string }[]).map(p => (
+                  { id: 'claude',   label: 'Claude',   sub: 'Haiku 4.5',  color: '#d97706', cost: '~$0.003/req' },
+                  { id: 'openai',   label: 'GPT-4o',   sub: 'mini',       color: '#10b981', cost: '~$0.002/req' },
+                  { id: 'deepseek', label: 'DeepSeek', sub: 'Chat',       color: '#6366f1', cost: '~$0.0003/req' },
+                ] as { id: AiProvider; label: string; sub: string; color: string; cost: string }[]).map(p => (
                   <button key={p.id} onClick={() => setAiProvider(p.id)} style={{
                     flex: 1, padding: '10px 8px', borderRadius: 8, cursor: 'pointer', textAlign: 'center',
                     background: aiProvider === p.id ? `${p.color}18` : '#0a0a0f',
@@ -1534,31 +1559,53 @@ export default function Home() {
                     color: aiProvider === p.id ? p.color : '#334155',
                   }}>
                     <div style={{ fontWeight: 800, fontSize: 13 }}>{p.label}</div>
-                    <div style={{ fontSize: 10, opacity: 0.7, marginTop: 2 }}>{p.sub} · {p.cost}/req</div>
+                    <div style={{ fontSize: 10, opacity: 0.8, marginTop: 2 }}>{p.sub} · {p.cost}</div>
                   </button>
                 ))}
               </div>
 
-              {/* Env var hint for selected provider */}
-              {(() => {
-                const info: Record<AiProvider, { envVar: string; cost: string; note: string }> = {
-                  claude:   { envVar: 'ANTHROPIC_API_KEY',  cost: '~$0.003/req', note: 'Fastest, most concise. Best for quick signal checks.' },
-                  openai:   { envVar: 'OPENAI_API_KEY',     cost: '~$0.002/req', note: 'GPT-4o mini — balanced quality and speed.' },
-                  deepseek: { envVar: 'DEEPSEEK_API_KEY',   cost: '~$0.0003/req', note: 'Cheapest option. Good quality, slightly slower.' },
-                };
-                const p = info[aiProvider];
-                return (
-                  <div style={{ padding: '10px 12px', background: '#0a0a0f', borderRadius: 6, fontSize: 11, lineHeight: 1.7 }}>
-                    <div style={{ color: '#94a3b8', marginBottom: 4 }}>
-                      Required Vercel env var: <code style={{ color: '#818cf8', background: '#1e1e2e', padding: '1px 6px', borderRadius: 3 }}>{p.envVar}</code>
-                    </div>
-                    <div style={{ color: '#475569' }}>Cost: {p.cost} · {p.note}</div>
-                    <div style={{ color: '#334155', marginTop: 4 }}>
-                      Add in Vercel → Project → Settings → Environment Variables → Redeploy
-                    </div>
-                  </div>
-                );
-              })()}
+              {/* API key inputs — paste your keys here, no Vercel setup needed */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <span style={{ fontSize: 12, color: '#64748b' }}>AI Provider API Keys</span>
+                <button onClick={() => setShowAiKeys(v => !v)} style={{
+                  padding: '3px 10px', background: 'none', border: '1px solid #1e1e2e',
+                  borderRadius: 5, color: '#475569', cursor: 'pointer', fontSize: 11,
+                }}>
+                  {showAiKeys ? 'Hide' : 'Show'} keys
+                </button>
+              </div>
+
+              {([
+                { id: 'claude',   label: 'Anthropic (Claude)',  value: anthropicKey, set: setAnthropicKey, placeholder: 'sk-ant-…',  color: '#d97706', ok: !!anthropicKey },
+                { id: 'openai',   label: 'OpenAI (GPT-4o)',     value: openaiKey,    set: setOpenaiKey,    placeholder: 'sk-…',       color: '#10b981', ok: !!openaiKey },
+                { id: 'deepseek', label: 'DeepSeek',            value: deepseekKey,  set: setDeepseekKey,  placeholder: 'sk-…',       color: '#6366f1', ok: !!deepseekKey },
+              ] as { id: string; label: string; value: string; set: (v: string) => void; placeholder: string; color: string; ok: boolean }[]).map(p => (
+                <div key={p.id} style={{ marginBottom: 8 }}>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+                    <span style={{ color: aiProvider === p.id ? p.color : '#475569', fontWeight: aiProvider === p.id ? 700 : 400 }}>
+                      {p.label}{aiProvider === p.id ? ' ← active' : ''}
+                    </span>
+                    {p.ok && <span style={{ color: '#22c55e' }}>✓ set</span>}
+                  </label>
+                  <input
+                    type={showAiKeys ? 'text' : 'password'}
+                    value={p.value}
+                    onChange={e => p.set(e.target.value)}
+                    placeholder={p.placeholder}
+                    style={{
+                      width: '100%', padding: '8px 12px', background: '#0a0a0f',
+                      border: `1px solid ${p.ok ? `${p.color}44` : '#1e1e2e'}`,
+                      borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 12,
+                      boxSizing: 'border-box', fontFamily: 'monospace',
+                    }}
+                  />
+                </div>
+              ))}
+
+              <div style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6, fontSize: 11, color: '#334155', lineHeight: 1.6, marginTop: 4 }}>
+                Keys are stored in your browser only — never sent to any server except directly to the AI provider when you request an analysis.
+                Get keys: <span style={{ color: '#475569' }}>console.anthropic.com · platform.openai.com · platform.deepseek.com</span>
+              </div>
             </div>
 
             {/* ── SAVE ───────────────────────────────────────── */}
@@ -1573,34 +1620,130 @@ export default function Home() {
               {settingsSaved ? '✓ All Settings Saved' : 'Save All Settings'}
             </button>
 
-            {/* ── 6. RISK MANAGEMENT RULES ───────────────────── */}
+            {/* ── 6. RISK MANAGEMENT STRATEGIES ─────────────── */}
             <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>6 · RISK RULES REFERENCE</div>
-              {[
-                { rule: 'Max risk/trade',      rec: '1–2%',           current: `${riskPct}%`, ok: riskPct <= 2,        detail: `= $${(accountSize * riskPct / 100).toFixed(0)} on your $${accountSize} account` },
-                { rule: 'Daily loss limit',    rec: '4% of account',  current: `$${dailyLossLimit}`, ok: dailyLossLimit <= accountSize * 0.05, detail: `Stop trading immediately at −$${dailyLossLimit}` },
-                { rule: 'Daily target',        rec: '5% of account',  current: `$${dailyTarget}`, ok: true,             detail: `Walk away after hitting +$${dailyTarget} — protect gains` },
-                { rule: 'Max trades/day',      rec: '3–5',            current: String(maxTrades),   ok: maxTrades <= 5,  detail: 'Quality > quantity. Overtrading kills accounts.' },
-                { rule: 'Leverage',            rec: '3–5× max',       current: capAt5x ? `Cap ${MAX_LEVERAGE}× ✓` : 'Cap OFF', ok: capAt5x, detail: 'Above 5× liquidation risk becomes severe on alts' },
-                { rule: 'Order type',          rec: 'Limit',          current: orderType,           ok: orderType === 'Limit', detail: 'Saves ~$3 per $6k position round-trip vs Market' },
-                { rule: 'Funding rate',        rec: 'Check before entry', current: forceTrade ? 'Bypassed' : 'Gated', ok: !forceTrade, detail: 'Longs pay when > +0.10%, shorts pay when < −0.10%' },
-                { rule: 'Stop loss',           rec: 'Always set',     current: '✓ Auto-attached',   ok: true,            detail: 'SL is required for every entry. No exceptions.' },
-                { rule: 'BTC correlation',     rec: 'Check alignment', current: '✓ Auto-scanned',   ok: true,            detail: 'Alts with BTC divergence carry extra reversal risk' },
-                { rule: 'Funding windows',     rec: 'Close before',   current: '8hr timestamps',    ok: true,            detail: 'Never hold through 00:00 08:00 16:00 UTC funding' },
-              ].map(({ rule, rec, current, ok, detail }) => (
-                <div key={rule} style={{ padding: '9px 0', borderBottom: '1px solid #0f0f17', display: 'grid', gridTemplateColumns: '120px 1fr', gap: 10, alignItems: 'start' }}>
-                  <div>
-                    <div style={{ color: '#64748b', fontSize: 11, fontWeight: 700 }}>{rule}</div>
-                    <div style={{ color: '#334155', fontSize: 10, marginTop: 1 }}>Rec: {rec}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: ok ? '#22c55e' : '#eab308', marginBottom: 2 }}>
-                      {ok ? '✓' : '⚠'} {current}
+              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 14 }}>6 · RISK MANAGEMENT STRATEGIES</div>
+
+              {/* Strategy: Position Sizing */}
+              {(() => {
+                const effLev = capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5;
+                const riskAmt = accountSize * riskPct / 100;
+                const position = accountSize * effLev;
+                const stopDistPct = 1; // typical 1% stop for alts
+                const positionByRisk = riskAmt / (stopDistPct / 100);
+                return (
+                  <div style={{ marginBottom: 12, padding: 12, background: '#0a0a0f', borderRadius: 8 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: '#818cf8', marginBottom: 8 }}>POSITION SIZING — Never Risk More Than Your Limit</div>
+                    <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.7, marginBottom: 8 }}>
+                      Formula: <span style={{ color: '#e2e8f0' }}>Risk $ ÷ Stop Distance % = Max Position Size</span>
                     </div>
-                    <div style={{ fontSize: 11, color: '#334155', lineHeight: 1.4 }}>{detail}</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 12 }}>
+                      <div style={{ padding: '6px 10px', background: '#111118', borderRadius: 6 }}>
+                        <div style={{ color: '#475569', fontSize: 10, marginBottom: 2 }}>Max risk this trade</div>
+                        <div style={{ color: '#ef4444', fontWeight: 700 }}>${riskAmt.toFixed(0)} ({riskPct}% of ${accountSize.toLocaleString()})</div>
+                      </div>
+                      <div style={{ padding: '6px 10px', background: '#111118', borderRadius: 6 }}>
+                        <div style={{ color: '#475569', fontSize: 10, marginBottom: 2 }}>Position at {effLev}×</div>
+                        <div style={{ color: '#818cf8', fontWeight: 700 }}>${position.toLocaleString()}</div>
+                      </div>
+                      <div style={{ padding: '6px 10px', background: '#111118', borderRadius: 6 }}>
+                        <div style={{ color: '#475569', fontSize: 10, marginBottom: 2 }}>Risk-sized at 1% stop</div>
+                        <div style={{ color: '#e2e8f0', fontWeight: 700 }}>${positionByRisk.toLocaleString()}</div>
+                      </div>
+                      <div style={{ padding: '6px 10px', background: '#111118', borderRadius: 6 }}>
+                        <div style={{ color: '#475569', fontSize: 10, marginBottom: 2 }}>Liquidation distance</div>
+                        <div style={{ color: '#ef4444', fontWeight: 700 }}>−{Math.max(0,(1/effLev-0.005)*100).toFixed(1)}% spot</div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#334155' }}>
+                      Your SL must be further than {Math.max(0,(1/effLev-0.005)*100).toFixed(1)}% from entry to avoid liquidation at {effLev}× leverage.
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })()}
+
+              {/* Strategy: Partial Exit Plan */}
+              {(() => {
+                const effLev = capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5;
+                const position = accountSize * effLev;
+                const takerFee = 0.00055;
+                const makerFee = 0.00020;
+                const spotMove = targetSpotPct / 100;
+                const tp1Profit = position * 0.5 * spotMove - position * 0.5 * (orderType === 'Limit' ? makerFee : takerFee) - position * 0.5 * takerFee;
+                const tp2Profit = position * 0.25 * (spotMove * 1.5);
+                const tp3Profit = position * 0.25 * (spotMove * 2.5);
+                return (
+                  <div style={{ marginBottom: 12, padding: 12, background: '#0a0a0f', borderRadius: 8 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: '#22c55e', marginBottom: 8 }}>PARTIAL EXIT STRATEGY — Lock Profits, Let Rest Run</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {[
+                        { label: 'TP1 — Close 50%', pct: `${targetSpotPct}% move`, profit: tp1Profit, color: '#22c55e', note: 'Move SL to breakeven after TP1 hit — house money trade' },
+                        { label: 'TP2 — Close 25%', pct: `${(targetSpotPct*1.5).toFixed(1)}% move`, profit: tp2Profit, color: '#4ade80', note: 'Trail stop to TP1 level — guaranteed profit on remaining' },
+                        { label: 'TP3 — Close 25%', pct: `${(targetSpotPct*2.5).toFixed(1)}% move`, profit: tp3Profit, color: '#86efac', note: 'Let this run — if market extends you capture the full move' },
+                      ].map(t => (
+                        <div key={t.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', background: '#111118', borderRadius: 6 }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: t.color }}>{t.label} ({t.pct})</div>
+                            <div style={{ fontSize: 10, color: '#334155', marginTop: 1 }}>{t.note}</div>
+                          </div>
+                          <div style={{ fontSize: 13, fontWeight: 800, color: t.color }}>+${t.profit.toFixed(2)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Strategy: Daily Session Rules */}
+              {(() => {
+                const effLev = capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5;
+                const netPerTrade = accountSize * effLev * (targetSpotPct/100) - accountSize * effLev * 0.00075;
+                const tradesNeeded = netPerTrade > 0 ? Math.ceil(dailyTarget / netPerTrade) : '∞';
+                return (
+                  <div style={{ marginBottom: 12, padding: 12, background: '#0a0a0f', borderRadius: 8 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12, color: '#eab308', marginBottom: 8 }}>SESSION RULES — Discipline Beats Intelligence</div>
+                    {[
+                      { icon: '🔴', rule: `Stop at −$${dailyLossLimit}`,           detail: `${Math.ceil(dailyLossLimit / (accountSize * riskPct / 100))} consecutive losses. Log off. No revenge trades.` },
+                      { icon: '🟢', rule: `Walk away at +$${dailyTarget}`,          detail: `Est. ${tradesNeeded} winning trades at current settings. Lock it in.` },
+                      { icon: '⏱',  rule: `Max ${maxTrades} trades/day`,            detail: 'Each trade needs a valid A/B+ setup. No FOMO entries.' },
+                      { icon: '💧', rule: 'Close before funding (00/08/16 UTC)',     detail: 'Holding through funding at high leverage destroys edge over time.' },
+                      { icon: '📊', rule: 'Score ≥ 75 + alignment ≥ 70% only',      detail: 'Autoscan filters this for you. Manual entries must meet same standard.' },
+                      { icon: '₿',  rule: 'BTC divergence = half size or skip',     detail: 'If BTC trends opposite your trade direction, reduce size by 50%.' },
+                    ].map(({ icon, rule, detail }) => (
+                      <div key={rule} style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid #0f0f17', alignItems: 'flex-start' }}>
+                        <span style={{ fontSize: 14, marginTop: 1 }}>{icon}</span>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{rule}</div>
+                          <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>{detail}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* Strategy: ICT Entry Checklist */}
+              <div style={{ padding: 12, background: '#0a0a0f', borderRadius: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>ICT ENTRY CHECKLIST — All Must Be True</div>
+                {[
+                  ['BOS or CHoCH confirmed on 15m or 1h', 'Structure must have shifted in your direction'],
+                  ['Price in OB or FVG zone', 'Do not chase — wait for price to return to value'],
+                  ['VWAP aligned with direction', 'Long above VWAP, short below VWAP'],
+                  ['Score ≥ 75 / Confidence ≥ 70%', 'Engine confirms multi-timeframe alignment'],
+                  ['BTC not diverging', 'Macro filter — check BTC panel in scan results'],
+                  ['Volume ≥ 1.0× average at entry', 'Institutional participation required'],
+                  ['RSI not extreme (not >75 for longs, not <25 for shorts)', 'Avoid entering exhausted moves'],
+                  ['SL placed below OB/FVG bottom (long) or above (short)', 'Technical stop, not arbitrary %'],
+                ].map(([check, reason]) => (
+                  <div key={check} style={{ display: 'flex', gap: 8, padding: '5px 0', borderBottom: '1px solid #0f0f17', alignItems: 'flex-start' }}>
+                    <span style={{ color: '#334155', fontSize: 14, marginTop: 0 }}>□</span>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>{check}</div>
+                      <div style={{ fontSize: 10, color: '#1e3a2e', marginTop: 1 }}>{reason}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}

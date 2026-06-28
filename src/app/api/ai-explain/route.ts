@@ -68,34 +68,34 @@ ${btcDirection ? `How BTC's ${btcDirection} trend (score ${btcScore}) and ${btcA
 One clear sentence: Enter now / Wait for pullback / Skip — and exactly why.`;
 }
 
-async function callClaude(prompt: string): Promise<string> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+async function callClaude(prompt: string, apiKey: string): Promise<string> {
+  const client = new Anthropic({ apiKey });
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 900,
+    max_tokens: 1024,
     messages: [{ role: 'user', content: prompt }],
   });
   return (msg.content[0] as { type: string; text: string }).text;
 }
 
-async function callOpenAI(prompt: string): Promise<string> {
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+async function callOpenAI(prompt: string, apiKey: string): Promise<string> {
+  const client = new OpenAI({ apiKey });
   const res = await client.chat.completions.create({
     model: 'gpt-4o-mini',
-    max_tokens: 900,
+    max_tokens: 1024,
     messages: [{ role: 'user', content: prompt }],
   });
   return res.choices[0]?.message?.content ?? '';
 }
 
-async function callDeepSeek(prompt: string): Promise<string> {
+async function callDeepSeek(prompt: string, apiKey: string): Promise<string> {
   const client = new OpenAI({
-    apiKey: process.env.DEEPSEEK_API_KEY,
+    apiKey,
     baseURL: 'https://api.deepseek.com',
   });
   const res = await client.chat.completions.create({
     model: 'deepseek-chat',
-    max_tokens: 900,
+    max_tokens: 1024,
     messages: [{ role: 'user', content: prompt }],
   });
   return res.choices[0]?.message?.content ?? '';
@@ -106,26 +106,28 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const provider: Provider = body.provider ?? 'claude';
 
-    const keyMap: Record<Provider, string | undefined> = {
+    // Client key (from browser localStorage) takes precedence over server env var
+    const clientKey: string | undefined = body.clientApiKey;
+    const envKeyMap: Record<Provider, string | undefined> = {
       claude:   process.env.ANTHROPIC_API_KEY,
       openai:   process.env.OPENAI_API_KEY,
       deepseek: process.env.DEEPSEEK_API_KEY,
     };
+    const resolvedKey = clientKey || envKeyMap[provider];
 
-    if (!keyMap[provider]) {
+    if (!resolvedKey) {
+      const envVarName = provider === 'claude' ? 'ANTHROPIC_API_KEY' : provider === 'openai' ? 'OPENAI_API_KEY' : 'DEEPSEEK_API_KEY';
       return NextResponse.json({
-        error: `${provider.toUpperCase()} API key not configured. Add ${
-          provider === 'claude' ? 'ANTHROPIC_API_KEY' : provider === 'openai' ? 'OPENAI_API_KEY' : 'DEEPSEEK_API_KEY'
-        } in Vercel environment variables.`,
+        error: `No API key for ${provider}. Paste your ${envVarName} in Settings → AI Analysis Provider.`,
       }, { status: 400 });
     }
 
     const prompt = buildPrompt(body);
 
     let explanation = '';
-    if (provider === 'claude')   explanation = await callClaude(prompt);
-    if (provider === 'openai')   explanation = await callOpenAI(prompt);
-    if (provider === 'deepseek') explanation = await callDeepSeek(prompt);
+    if (provider === 'claude')   explanation = await callClaude(prompt, resolvedKey);
+    if (provider === 'openai')   explanation = await callOpenAI(prompt, resolvedKey);
+    if (provider === 'deepseek') explanation = await callDeepSeek(prompt, resolvedKey);
 
     return NextResponse.json({ explanation, provider });
 
