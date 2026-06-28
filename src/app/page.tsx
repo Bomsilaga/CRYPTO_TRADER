@@ -262,6 +262,56 @@ function detectBtcDivergences(signal: ScanResult, btc: ScanResult): string[] {
   return divs;
 }
 
+/* ─── BTC Verdict Engine (rule-based, no API cost) ──────────────────────── */
+
+type BtcVerdict = { label: string; color: string; bg: string; border: string; reason: string };
+
+function getBtcVerdict(signal: ScanResult, btc: ScanResult, divs: string[]): BtcVerdict {
+  const dirConflict = btc.direction !== 'NEUTRAL' && btc.direction !== signal.direction;
+  const strong = signal.totalScore >= 80;
+  const btcStrong = btc.totalScore >= 70;
+
+  if (dirConflict && divs.length >= 3)
+    return { label: 'SKIP', color: '#ef4444', bg: '#ef444411', border: '#ef444433',
+      reason: `BTC is firmly ${btc.direction} with ${divs.length} macro conflicts. Do not fight the macro trend.` };
+
+  if (dirConflict && divs.length >= 2)
+    return { label: 'SKIP', color: '#ef4444', bg: '#ef444411', border: '#ef444433',
+      reason: `BTC trending ${btc.direction} and multiple macro indicators oppose this ${signal.direction}. Wait for BTC alignment.` };
+
+  if (dirConflict)
+    return { label: 'HALF SIZE', color: '#f97316', bg: '#f9731611', border: '#f9731633',
+      reason: `BTC trending ${btc.direction} vs your ${signal.direction}. Enter at 50% size only — exit immediately if BTC accelerates opposite.` };
+
+  if (divs.length >= 3)
+    return { label: 'REDUCE SIZE', color: '#eab308', bg: '#eab30811', border: '#eab30833',
+      reason: `${divs.length} BTC indicators warn against this ${signal.direction}. Risk ≤1% and tighten stop to nearest structure.` };
+
+  if (divs.length === 2)
+    return { label: 'HALF SIZE', color: '#f97316', bg: '#f9731611', border: '#f9731633',
+      reason: `Two BTC macro conflicts. Use 50% normal size; invalidate if either condition worsens before entry.` };
+
+  if (divs.length === 1 && !strong)
+    return { label: 'PROCEED CAUTIOUSLY', color: '#eab308', bg: '#eab30811', border: '#eab30833',
+      reason: `One minor BTC conflict noted. Signal score ${signal.totalScore} is not exceptional — wait for entry candle confirmation before executing.` };
+
+  if (divs.length === 1 && strong && btcStrong)
+    return { label: 'PROCEED', color: '#22c55e', bg: '#22c55e11', border: '#22c55e33',
+      reason: `Strong signal (${signal.totalScore}) with only one minor BTC conflict and aligned BTC momentum. Execute at planned entry with standard size.` };
+
+  if (divs.length === 1)
+    return { label: 'PROCEED CAUTIOUSLY', color: '#eab308', bg: '#eab30811', border: '#eab30833',
+      reason: `Minor BTC divergence present. Standard entry is fine but stay alert — close early if BTC flips.` };
+
+  // No divergences
+  if (btcStrong && strong)
+    return { label: 'HIGH CONVICTION — PROCEED', color: '#22c55e', bg: '#22c55e18', border: '#22c55e44',
+      reason: `Full BTC macro alignment with no conflicts. Both BTC (${btc.totalScore}) and signal (${signal.totalScore}) are strong. Execute with confidence.` };
+
+  return { label: 'PROCEED', color: '#22c55e', bg: '#22c55e11', border: '#22c55e33',
+    reason: `BTC macro is aligned with this ${signal.direction} — no conflicts detected. Standard position size and risk apply.` };
+}
+
 /* ─── Constants ──────────────────────────────────────────────────────────── */
 
 const POPULAR = [
@@ -823,7 +873,7 @@ export default function Home() {
                           </span>
                         </div>
                         {divs.length > 0 && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
                             {divs.map((d, i) => (
                               <div key={i} style={{ padding: '5px 9px', background: '#dc262611', border: '1px solid #dc262633', borderRadius: 5, color: '#fca5a5', fontSize: 11 }}>
                                 ⚠ {d}
@@ -831,6 +881,18 @@ export default function Home() {
                             ))}
                           </div>
                         )}
+                        {(() => {
+                          const v = getBtcVerdict(result, btcResult, divs);
+                          return (
+                            <div style={{ padding: '9px 12px', background: v.bg, border: `1px solid ${v.border}`, borderRadius: 6 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                <span style={{ fontSize: 10, color: '#64748b', fontWeight: 600, letterSpacing: 1 }}>BTC VERDICT</span>
+                                <span style={{ fontSize: 12, fontWeight: 800, color: v.color }}>{v.label}</span>
+                              </div>
+                              <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.5 }}>{v.reason}</div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })()
