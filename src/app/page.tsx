@@ -1552,48 +1552,75 @@ export default function Home() {
                           </div>
 
                           {/* Price bar: SL ──── entry ─── current ──── TP1 ── TP2 ── TP3 */}
-                          <div style={{ position: 'relative', height: 28, background: '#0a0a0f', borderRadius: 6, overflow: 'hidden' }}>
-                            {/* Green zone entry→TP3, red zone SL→entry */}
-                            <div style={{ position: 'absolute', left: `${markerEntry}%`, right: `${100 - markerTp1}%`, top: 0, bottom: 0, background: '#22c55e18' }} />
-                            <div style={{ position: 'absolute', left: 0, right: `${100 - markerEntry}%`, top: 0, bottom: 0, background: '#ef444418' }} />
-                            {/* Level markers */}
-                            {[
-                              { pct: markerEntry, color: '#e2e8f0', label: 'E' },
-                              { pct: markerTp1,   color: '#22c55e', label: '1' },
-                              { pct: markerTp2,   color: '#16a34a', label: '2' },
-                            ].map(({ pct, color, label }) => (
-                              <div key={label} style={{ position: 'absolute', left: `${pct}%`, top: 0, bottom: 0, width: 1, background: `${color}66` }}>
-                                <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 8, color, opacity: 0.8 }}>{label}</span>
-                              </div>
-                            ))}
-                            {/* SL marker */}
-                            <div style={{ position: 'absolute', left: t.direction === 'LONG' ? 0 : '100%', top: 0, bottom: 0, width: 2, background: '#ef444488' }} />
-                            {/* Current price dot */}
-                            {priceBarPct !== null && (
-                              <div style={{
-                                position: 'absolute', left: `${priceBarPct}%`,
-                                top: '50%', transform: 'translate(-50%, -50%)',
-                                width: 10, height: 10, borderRadius: '50%',
-                                background: pnlColor, boxShadow: `0 0 6px ${pnlColor}`,
-                                transition: 'left 0.6s ease',
-                              }} />
-                            )}
-                            {/* Labels */}
-                            <div style={{ position: 'absolute', left: 4, top: '50%', transform: 'translateY(-50%)', fontSize: 9, color: '#ef444488' }}>SL</div>
-                            <div style={{ position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)', fontSize: 9, color: '#22c55e88' }}>TP3</div>
-                          </div>
-
-                          {/* Level distances */}
-                          {currentPrice !== null && (
-                            <div style={{ display: 'flex', gap: 12, fontSize: 10, color: '#334155', marginTop: 5 }}>
-                              <span>SL: <span style={{ color: '#ef4444' }}>
-                                {(Math.abs(currentPrice - t.stopLoss) / currentPrice * 100).toFixed(2)}% away
-                              </span></span>
-                              <span>TP1: <span style={{ color: '#22c55e' }}>
-                                {(Math.abs(currentPrice - t.tp1) / currentPrice * 100).toFixed(2)}% away
-                              </span></span>
+                          <div style={{ marginTop: 4 }}>
+                            {/* Labels above bar */}
+                            <div style={{ position: 'relative', height: 18, marginBottom: 3 }}>
+                              <span style={{ position: 'absolute', left: 0, fontSize: 10, color: '#ef4444', fontWeight: 700 }}>SL</span>
+                              <span style={{ position: 'absolute', left: `${markerEntry}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>ENTRY</span>
+                              <span style={{ position: 'absolute', left: `${markerTp1}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#4ade80', fontWeight: 700 }}>TP1</span>
+                              <span style={{ position: 'absolute', left: `${markerTp2}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#22c55e', fontWeight: 700 }}>TP2</span>
+                              <span style={{ position: 'absolute', right: 0, fontSize: 10, color: '#16a34a', fontWeight: 700 }}>TP3</span>
                             </div>
-                          )}
+
+                            {/* Bar */}
+                            <div style={{ position: 'relative', height: 44, borderRadius: 8, overflow: 'hidden', background: '#080810' }}>
+                              {/* Red zone: SL → entry */}
+                              <div style={{ position: 'absolute', left: 0, right: `${100 - markerEntry}%`, top: 0, bottom: 0, background: 'linear-gradient(90deg, #ef444440 0%, #ef444414 100%)' }} />
+                              {/* Green zone: entry → TP3 */}
+                              <div style={{ position: 'absolute', left: `${markerEntry}%`, right: 0, top: 0, bottom: 0, background: 'linear-gradient(90deg, #22c55e18 0%, #22c55e38 100%)' }} />
+
+                              {/* Progress fill: entry → current price */}
+                              {priceBarPct !== null && (
+                                <div style={{
+                                  position: 'absolute',
+                                  left: `${Math.min(markerEntry, priceBarPct)}%`,
+                                  right: `${100 - Math.max(markerEntry, priceBarPct)}%`,
+                                  top: '25%', bottom: '25%',
+                                  background: pnlColor + '44',
+                                  borderRadius: 4,
+                                  transition: 'left 0.6s ease, right 0.6s ease',
+                                }} />
+                              )}
+
+                              {/* SL edge bar */}
+                              <div style={{ position: 'absolute', left: t.direction === 'LONG' ? 0 : undefined, right: t.direction === 'SHORT' ? 0 : undefined, top: 0, bottom: 0, width: 4, background: '#ef4444', borderRadius: '4px 0 0 4px' }} />
+                              {/* Entry line */}
+                              <div style={{ position: 'absolute', left: `${markerEntry}%`, top: 0, bottom: 0, width: 2, background: '#94a3b8cc' }} />
+                              {/* TP1 line */}
+                              <div style={{ position: 'absolute', left: `${markerTp1}%`, top: 0, bottom: 0, width: 2, background: '#4ade80aa' }} />
+                              {/* TP2 line */}
+                              <div style={{ position: 'absolute', left: `${markerTp2}%`, top: 0, bottom: 0, width: 2, background: '#22c55e77' }} />
+
+                              {/* Current price dot */}
+                              {priceBarPct !== null && (
+                                <div style={{
+                                  position: 'absolute', left: `${priceBarPct}%`,
+                                  top: '50%', transform: 'translate(-50%, -50%)',
+                                  width: 16, height: 16, borderRadius: '50%',
+                                  background: pnlColor,
+                                  boxShadow: `0 0 14px ${pnlColor}, 0 0 5px ${pnlColor}`,
+                                  border: `2.5px solid #0a0a0f`,
+                                  transition: 'left 0.6s ease',
+                                  zIndex: 10,
+                                }} />
+                              )}
+                            </div>
+
+                            {/* Distances below bar */}
+                            {currentPrice !== null && (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+                                <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 700 }}>
+                                  ↙ SL {(Math.abs(currentPrice - t.stopLoss) / currentPrice * 100).toFixed(2)}% away
+                                </span>
+                                <span style={{ fontSize: 10, color: '#475569' }}>
+                                  ${currentPrice.toFixed(currentPrice < 1 ? 6 : currentPrice < 100 ? 4 : 2)}
+                                </span>
+                                <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 700 }}>
+                                  TP1 {(Math.abs(currentPrice - t.tp1) / currentPrice * 100).toFixed(2)}% away ↗
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
 
