@@ -315,24 +315,30 @@ function getBtcVerdict(signal: ScanResult, btc: ScanResult, divs: string[]): Btc
 /* ─── Constants ──────────────────────────────────────────────────────────── */
 
 const POPULAR = [
-  // Core L1
-  'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT', 'DOTUSDT', 'ATOMUSDT',
-  // Memes — Bybit uses 1000x prefix for sub-cent tokens
-  'DOGEUSDT', '1000SHIBUSDT', '1000PEPEUSDT', 'WIFUSDT', '1000BOMEUSDT', '1000FLOKIUSDT',
-  // L2 / rollups (MATIC rebranded to POL)
-  'ARBUSDT', 'OPUSDT', 'STRKUSDT', 'POLUSDT',
-  // Ecosystem tokens
-  'SUIUSDT', 'APTUSDT', 'INJUSDT', 'NEARUSDT', 'SEIUSDT', 'TIAUSDT', 'XLMUSDT',
-  // DeFi blue chips
-  'LINKUSDT', 'AAVEUSDT', 'UNIUSDT', 'LDOUSDT', 'GRTUSDT',
-  // AI / infra
-  'TAOUSDT', 'RENDERUSDT', 'WLDUSDT',
-  // Solana ecosystem
+  // ── Core L1s ──────────────────────────────────────────────────────────
+  'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT',
+  'DOTUSDT', 'ATOMUSDT', 'TRXUSDT', 'ICPUSDT', 'XLMUSDT', 'HBARUSDT',
+  // ── Memes (Bybit 1000× prefix for sub-cent tokens) ────────────────────
+  'DOGEUSDT', '1000SHIBUSDT', '1000PEPEUSDT', 'WIFUSDT',
+  '1000BOMEUSDT', '1000FLOKIUSDT', '1000BONKUSDT',
+  // ── L2 / rollups (MATIC → POL) ────────────────────────────────────────
+  'ARBUSDT', 'OPUSDT', 'STRKUSDT', 'POLUSDT', 'MNTUSDT', 'ZKUSDT',
+  // ── Move / new L1 ─────────────────────────────────────────────────────
+  'SUIUSDT', 'APTUSDT', 'SEIUSDT',
+  // ── Cosmos / interchain ───────────────────────────────────────────────
+  'INJUSDT', 'TIAUSDT', 'NEARUSDT', 'RUNEUSDT',
+  // ── DeFi blue chips ───────────────────────────────────────────────────
+  'LINKUSDT', 'AAVEUSDT', 'UNIUSDT', 'LDOUSDT', 'CRVUSDT', 'PENDLEUSDT', 'GRTUSDT',
+  // ── AI / infra ────────────────────────────────────────────────────────
+  'TAOUSDT', 'RENDERUSDT', 'WLDUSDT', 'EIGENUSDT',
+  // ── Solana ecosystem ──────────────────────────────────────────────────
   'JUPUSDT', 'PYTHUSDT', 'JTOUSDT',
-  // Bitcoin ecosystem
-  'ORDIUSDT', 'LTCUSDT',
-  // Other vol plays
-  'FILUSDT', 'SANDUSDT', 'AXSUSDT',
+  // ── Bitcoin L2 / ecosystem ────────────────────────────────────────────
+  'ORDIUSDT', 'STXUSDT', 'LTCUSDT',
+  // ── Gaming / metaverse ────────────────────────────────────────────────
+  'SANDUSDT', 'AXSUSDT', 'GALAUSDT', 'MANAUSDT',
+  // ── Other high-vol / trending ─────────────────────────────────────────
+  'ENAUSDT', 'FILUSDT', 'ALTUSDT',
 ];
 
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
