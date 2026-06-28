@@ -1,9 +1,7 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ['web-push'],
-  },
+  serverExternalPackages: ['web-push'],
 };
 
 export default nextConfig;
