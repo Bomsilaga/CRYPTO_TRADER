@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 
+type AiProvider = 'claude' | 'openai' | 'deepseek';
+
 interface AutoScanAlert {
   symbol: string;
   score: number;
@@ -228,12 +230,56 @@ function RiskCalculator() {
   );
 }
 
+/* ─── BTC Divergence Detector ────────────────────────────────────────────── */
+
+function detectBtcDivergences(signal: ScanResult, btc: ScanResult): string[] {
+  const divs: string[] = [];
+  const dir = signal.direction;
+  const bd = btc.deep;
+  if (btc.direction !== 'NEUTRAL' && btc.direction !== dir)
+    divs.push(`BTC trending ${btc.direction} (score ${btc.totalScore}) while signal is ${dir} — major macro divergence`);
+  if (dir === 'LONG' && bd.rsi > 70)
+    divs.push(`BTC RSI ${bd.rsi.toFixed(1)} overbought — crypto-wide exhaustion risk for longs`);
+  if (dir === 'SHORT' && bd.rsi < 30)
+    divs.push(`BTC RSI ${bd.rsi.toFixed(1)} oversold — reversal risk shorting into deeply oversold BTC`);
+  if (dir === 'LONG' && bd.macdBear && !bd.macdBull)
+    divs.push('BTC MACD bearish — macro momentum is against this LONG');
+  if (dir === 'SHORT' && bd.macdBull && !bd.macdBear)
+    divs.push('BTC MACD bullish — macro momentum is against this SHORT');
+  if (dir === 'LONG' && !bd.vwapAbove)
+    divs.push('BTC trading below VWAP — broad market structure bearish');
+  if (dir === 'SHORT' && bd.vwapAbove)
+    divs.push('BTC trading above VWAP — broad market structure bullish, shorts swim against tide');
+  if (bd.wyckoffPhase?.includes('DISTRIBUTION') && dir === 'LONG')
+    divs.push('BTC Wyckoff: DISTRIBUTION — macro selling pressure poorly aligned with LONG');
+  if (bd.wyckoffPhase?.includes('ACCUMULATION') && dir === 'SHORT')
+    divs.push('BTC Wyckoff: ACCUMULATION — macro demand building, fading this SHORT is risky');
+  if (btc.totalScore >= 75 && signal.totalScore < 55)
+    divs.push(`BTC signal very strong (${btc.totalScore}) vs weak coin signal (${signal.totalScore}) — confirm alt follows`);
+  return divs;
+}
+
 /* ─── Constants ──────────────────────────────────────────────────────────── */
 
 const POPULAR = [
-  'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT',
-  'LINKUSDT', 'NEARUSDT', 'OPUSDT', 'ARBUSDT', 'SUIUSDT', 'APTUSDT', 'INJUSDT', 'ATOMUSDT',
-  'LTCUSDT', 'TONUSDT', 'PEPEUSDT', 'WIFUSDT', 'SEIUSDT', 'TIAUSDT', 'FILUSDT', 'MATICUSDT',
+  // Core L1
+  'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'AVAXUSDT', 'DOTUSDT', 'ATOMUSDT',
+  // High-volatility memes / alts
+  'DOGEUSDT', 'SHIBUSDT', 'PEPEUSDT', 'WIFUSDT', 'BOMEUSDT', 'FLOKIUSDT',
+  // L2 / rollups
+  'ARBUSDT', 'OPUSDT', 'STRKUSDT', 'MATICUSDT',
+  // Ecosystem tokens
+  'SUIUSDT', 'APTUSDT', 'INJUSDT', 'NEARUSDT', 'SEIUSDT', 'TIAUSDT', 'TONUSDT',
+  // DeFi blue chips
+  'LINKUSDT', 'AAVEUSDT', 'UNIUSDT', 'LDOUSDT', 'GRTUSDT',
+  // AI / infra / RWA
+  'RENDERUSDT', 'FETUSDT', 'WLDUSDT',
+  // Solana ecosystem
+  'JUPUSDT', 'PYTHUSDT', 'JTOUSDT',
+  // Bitcoin ecosystem
+  'ORDIUSDT', 'LTCUSDT',
+  // Other vol plays
+  'FILUSDT', 'GMXUSDT', 'KASUSDT',
 ];
 
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
@@ -298,10 +344,14 @@ export default function Home() {
   // Trade journal
   const [trades, setTrades] = useState<TradeEntry[]>([]);
 
+  // BTC comparison
+  const [btcResult, setBtcResult] = useState<ScanResult | null>(null);
+
   // AI explanation
   const [aiLoading, setAiLoading] = useState(false);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
   const [aiWarnings, setAiWarnings] = useState<string[]>([]);
+  const [aiProvider, setAiProvider] = useState<AiProvider>('claude');
 
   // Load settings from localStorage
   useEffect(() => {
@@ -315,13 +365,14 @@ export default function Home() {
         if (s.riskPct) setRiskPct(s.riskPct);
         if (s.orderType) setOrderType(s.orderType);
         if (typeof s.capAt5x === 'boolean') setCapAt5x(s.capAt5x);
+        if (s.aiProvider) setAiProvider(s.aiProvider as AiProvider);
       }
     } catch { /* ignore */ }
   }, []);
 
   function saveSettings() {
     try {
-      localStorage.setItem('4scans-settings', JSON.stringify({ apiKey, apiSecret, liveMode, riskPct, orderType, capAt5x }));
+      localStorage.setItem('4scans-settings', JSON.stringify({ apiKey, apiSecret, liveMode, riskPct, orderType, capAt5x, aiProvider }));
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
     } catch { /* ignore */ }
@@ -373,15 +424,24 @@ export default function Home() {
   async function scan(sym = symbol) {
     setLoading(true);
     setResult(null);
+    setBtcResult(null);
     setTradeResult(null);
     setAiExplanation(null);
     setAiWarnings([]);
     setTab('scan');
     try {
-      const res = await fetch(`/api/scan?symbol=${sym.toUpperCase()}`);
+      const upperSym = sym.toUpperCase();
+      const isBtc = upperSym === 'BTCUSDT';
+      const [res, btcRes] = await Promise.all([
+        fetch(`/api/scan?symbol=${upperSym}`),
+        isBtc ? null : fetch('/api/scan?symbol=BTCUSDT'),
+      ]);
       const data = await res.json() as ScanResult;
       setResult(data);
-      // Apply leverage cap when pre-filling
+      if (btcRes) {
+        const btcData = await btcRes.json() as ScanResult;
+        if (btcData.ok) setBtcResult(btcData);
+      }
       if (data?.masterSignal?.leverage) {
         setUserLeverage(capAt5x ? Math.min(data.masterSignal.leverage, MAX_LEVERAGE) : data.masterSignal.leverage);
       }
@@ -401,28 +461,41 @@ export default function Home() {
       const res = await fetch('/api/ai-explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(result),
+        body: JSON.stringify({
+          ...result,
+          provider: aiProvider,
+          btcDirection: btcResult?.direction,
+          btcScore: btcResult?.totalScore,
+          btcConfidence: btcResult?.confidence,
+          btcDeep: btcResult?.deep,
+        }),
       });
       const data = await res.json() as { explanation?: string; error?: string };
       if (data.error) { setAiExplanation(`Error: ${data.error}`); return; }
       setAiExplanation(data.explanation ?? '');
 
-      // Flag misalignments between deep data and signal direction
+      // Flag misalignments: coin vs its own deep data
       const warnings: string[] = [];
       const d = result.deep;
       const dir = result.direction;
-      if (dir === 'LONG' && !d.vwapAbove) warnings.push('VWAP is ABOVE price — longs trading against VWAP bias');
-      if (dir === 'SHORT' && d.vwapAbove) warnings.push('VWAP is BELOW price — shorts trading against VWAP bias');
-      if (dir === 'LONG' && d.rsi > 70) warnings.push(`RSI ${d.rsi.toFixed(1)} is overbought — entering longs here is high risk`);
-      if (dir === 'SHORT' && d.rsi < 30) warnings.push(`RSI ${d.rsi.toFixed(1)} is oversold — entering shorts here is high risk`);
-      if (dir === 'LONG' && d.macdBear && !d.macdBull) warnings.push('MACD is bearish — momentum not aligned with LONG direction');
-      if (dir === 'SHORT' && d.macdBull && !d.macdBear) warnings.push('MACD is bullish — momentum not aligned with SHORT direction');
-      if (dir === 'LONG' && d.volRatio < 0.8) warnings.push(`Volume ${d.volRatio.toFixed(1)}× below average — no institutional participation yet`);
-      if (dir === 'SHORT' && d.volRatio < 0.8) warnings.push(`Volume ${d.volRatio.toFixed(1)}× below average — no institutional participation yet`);
-      if (!d.hasBOS) warnings.push('No Break of Structure confirmed — entry lacks structural validity');
-      if (!d.hasOB && !d.hasFVG) warnings.push('Neither Order Block nor FVG present — no ICT confluence zone identified');
-      if (d.wyckoffPhase?.includes('ACCUMULATION') && dir === 'SHORT') warnings.push('Wyckoff shows ACCUMULATION — shorting into potential demand zone');
-      if (d.wyckoffPhase?.includes('DISTRIBUTION') && dir === 'LONG') warnings.push('Wyckoff shows DISTRIBUTION — buying into potential supply zone');
+      if (dir === 'LONG' && !d.vwapAbove)  warnings.push('[Signal] VWAP is above price — longs trading against VWAP bias');
+      if (dir === 'SHORT' && d.vwapAbove)  warnings.push('[Signal] VWAP is below price — shorts trading against VWAP bias');
+      if (dir === 'LONG' && d.rsi > 70)    warnings.push(`[Signal] RSI ${d.rsi.toFixed(1)} overbought — entering longs here is high risk`);
+      if (dir === 'SHORT' && d.rsi < 30)   warnings.push(`[Signal] RSI ${d.rsi.toFixed(1)} oversold — entering shorts here is high risk`);
+      if (dir === 'LONG' && d.macdBear && !d.macdBull)  warnings.push('[Signal] MACD bearish — momentum not aligned with LONG');
+      if (dir === 'SHORT' && d.macdBull && !d.macdBear) warnings.push('[Signal] MACD bullish — momentum not aligned with SHORT');
+      if (d.volRatio < 0.8) warnings.push(`[Signal] Volume ${d.volRatio.toFixed(1)}× below average — no institutional participation`);
+      if (!d.hasBOS)            warnings.push('[Signal] No BOS confirmed — entry lacks structural validity');
+      if (!d.hasOB && !d.hasFVG) warnings.push('[Signal] No OB or FVG — no ICT confluence zone identified');
+      if (d.wyckoffPhase?.includes('ACCUMULATION') && dir === 'SHORT') warnings.push('[Signal] Wyckoff ACCUMULATION — shorting into potential demand zone');
+      if (d.wyckoffPhase?.includes('DISTRIBUTION') && dir === 'LONG')  warnings.push('[Signal] Wyckoff DISTRIBUTION — buying into potential supply zone');
+
+      // Flag BTC divergences
+      if (btcResult?.ok) {
+        const btcDivs = detectBtcDivergences(result, btcResult);
+        btcDivs.forEach(d => warnings.push(`[BTC] ${d}`));
+      }
+
       setAiWarnings(warnings);
     } catch (e) {
       setAiExplanation(`Error: ${String(e)}`);
@@ -680,6 +753,55 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* BTC Trend Comparison */}
+                {btcResult?.ok && (
+                  (() => {
+                    const btcDir = btcResult.direction;
+                    const btcAligned = btcDir === result.direction || btcDir === 'NEUTRAL';
+                    const divs = detectBtcDivergences(result, btcResult);
+                    const btcDirColor = btcDir === 'LONG' ? '#22c55e' : btcDir === 'SHORT' ? '#ef4444' : '#94a3b8';
+                    return (
+                      <div style={{
+                        padding: 14, background: '#111118',
+                        border: `1px solid ${btcAligned ? '#1e3a2e' : '#3a1e1e'}`,
+                        borderRadius: 10,
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: divs.length > 0 ? 10 : 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontWeight: 700, fontSize: 12, color: '#94a3b8' }}>₿ BTC TREND</span>
+                            <span style={{
+                              padding: '2px 10px', borderRadius: 4, fontSize: 12, fontWeight: 700,
+                              background: `${btcDirColor}22`, color: btcDirColor, border: `1px solid ${btcDirColor}44`,
+                            }}>
+                              {btcDir === 'LONG' ? '▲' : btcDir === 'SHORT' ? '▼' : '—'} {btcDir}
+                            </span>
+                            <span style={{ fontSize: 11, color: '#475569' }}>
+                              Score {btcResult.totalScore} · RSI {btcResult.deep.rsi.toFixed(0)} · {btcResult.deep.wyckoffPhase}
+                            </span>
+                          </div>
+                          <span style={{
+                            padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700,
+                            background: btcAligned ? '#16a34a22' : '#dc262622',
+                            color: btcAligned ? '#22c55e' : '#ef4444',
+                            border: `1px solid ${btcAligned ? '#16a34a44' : '#dc262644'}`,
+                          }}>
+                            {btcAligned ? '✓ Aligned' : '⚠ Diverging'}
+                          </span>
+                        </div>
+                        {divs.length > 0 && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {divs.map((d, i) => (
+                              <div key={i} style={{ padding: '5px 9px', background: '#dc262611', border: '1px solid #dc262633', borderRadius: 5, color: '#fca5a5', fontSize: 11 }}>
+                                ⚠ {d}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()
+                )}
+
                 {/* Trade levels */}
                 <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
                   <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: '#94a3b8' }}>TRADE LEVELS</div>
@@ -737,7 +859,7 @@ export default function Home() {
 
                 {/* ── AI DEEP ANALYSIS ────────────────────────────────── */}
                 <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: aiExplanation || aiWarnings.length > 0 ? 12 : 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                     <span style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8' }}>🤖 AI DEEP ANALYSIS</span>
                     <button onClick={getAiExplain} disabled={aiLoading} style={{
                       padding: '6px 16px', background: aiLoading ? '#1e1e2e' : '#6366f122',
@@ -747,6 +869,27 @@ export default function Home() {
                     }}>
                       {aiLoading ? 'Analysing…' : aiExplanation ? 'Refresh' : 'Get Analysis'}
                     </button>
+                  </div>
+
+                  {/* Provider toggle */}
+                  <div style={{ display: 'flex', gap: 6, marginBottom: aiExplanation || aiWarnings.length > 0 ? 12 : 0 }}>
+                    {([
+                      { id: 'claude',   label: 'Claude',   color: '#d97706' },
+                      { id: 'openai',   label: 'GPT-4o',   color: '#10b981' },
+                      { id: 'deepseek', label: 'DeepSeek', color: '#6366f1' },
+                    ] as { id: AiProvider; label: string; color: string }[]).map(p => (
+                      <button key={p.id} onClick={() => { setAiProvider(p.id); setAiExplanation(null); }} style={{
+                        padding: '4px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                        background: aiProvider === p.id ? `${p.color}22` : '#0a0a0f',
+                        color: aiProvider === p.id ? p.color : '#334155',
+                        border: `1px solid ${aiProvider === p.id ? `${p.color}55` : '#1e1e2e'}`,
+                      }}>
+                        {p.label}
+                      </button>
+                    ))}
+                    <span style={{ fontSize: 10, color: '#334155', marginLeft: 4, alignSelf: 'center' }}>
+                      {aiProvider === 'claude' ? 'ANTHROPIC_API_KEY' : aiProvider === 'openai' ? 'OPENAI_API_KEY' : 'DEEPSEEK_API_KEY'}
+                    </span>
                   </div>
 
                   {/* Misalignment warnings */}
