@@ -383,6 +383,11 @@ export default function Home() {
   const [showRaw, setShowRaw] = useState(false);
   const [autoScan, setAutoScan] = useState<AutoScanResult | null>(null);
 
+  // Market overview — all pairs scanned at once
+  const [marketOv, setMarketOv] = useState<Record<string, { score: number; direction: string; confidence: number }>>({});
+  const [marketScanning, setMarketScanning] = useState(false);
+  const [marketProgress, setMarketProgress] = useState(0);
+
   // Settings state
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
@@ -543,6 +548,31 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function scanMarket() {
+    setMarketScanning(true);
+    setMarketOv({});
+    setMarketProgress(0);
+    let done = 0;
+    const BATCH = 5;
+    for (let i = 0; i < POPULAR.length; i += BATCH) {
+      const batch = POPULAR.slice(i, i + BATCH);
+      await Promise.allSettled(
+        batch.map(async (sym) => {
+          try {
+            const res = await fetch(`/api/scan?symbol=${sym}`);
+            const data = await res.json() as ScanResult;
+            if (data.ok) {
+              setMarketOv(prev => ({ ...prev, [sym]: { score: data.totalScore, direction: data.direction, confidence: data.confidence } }));
+            }
+          } catch { /* skip */ }
+          done++;
+          setMarketProgress(done);
+        })
+      );
+    }
+    setMarketScanning(false);
   }
 
   async function getAiExplain() {
@@ -745,19 +775,81 @@ export default function Home() {
               </button>
             </div>
 
-            {/* Quick picks */}
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-              {POPULAR.map(s => (
-                <button key={s} onClick={() => { setSymbol(s); scan(s); }} style={{
-                  padding: '5px 10px', background: symbol === s ? '#1e1b4b' : '#111118',
-                  border: `1px solid ${symbol === s ? '#6366f1' : '#1e1e2e'}`,
-                  borderRadius: 6, color: symbol === s ? '#818cf8' : '#64748b',
-                  cursor: 'pointer', fontSize: 12, fontWeight: symbol === s ? 700 : 400,
-                }}>
-                  {s.replace('USDT', '')}
-                </button>
-              ))}
+            {/* Market overview header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 12, color: '#475569' }}>
+                {marketScanning
+                  ? `Scanning… ${marketProgress}/${POPULAR.length}`
+                  : Object.keys(marketOv).length > 0
+                    ? `${Object.keys(marketOv).length} pairs · click to analyse`
+                    : 'Quick pick or scan all for scores'}
+              </span>
+              <button
+                onClick={marketScanning ? undefined : scanMarket}
+                disabled={marketScanning}
+                style={{
+                  padding: '5px 14px', background: marketScanning ? '#1e1e2e' : '#0f172a',
+                  border: '1px solid #334155', borderRadius: 6, color: marketScanning ? '#475569' : '#94a3b8',
+                  cursor: marketScanning ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
+                }}
+              >
+                {marketScanning ? `Scanning ${marketProgress}/${POPULAR.length}…` : '⚡ Scan All Pairs'}
+              </button>
             </div>
+
+            {/* Scored 3-column grid (shown after scan) or flat chip fallback */}
+            {Object.keys(marketOv).length > 0 ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                {POPULAR.map(s => {
+                  const ov = marketOv[s];
+                  const label = s.replace('1000', '').replace('USDT', '');
+                  const dir = ov?.direction ?? null;
+                  const score = ov?.score ?? null;
+                  const active = symbol === s;
+                  const dirColor = dir === 'LONG' ? '#22c55e' : dir === 'SHORT' ? '#ef4444' : '#64748b';
+                  const scoreColor = score === null ? '#334155' : score >= 80 ? '#22c55e' : score >= 65 ? '#eab308' : '#64748b';
+                  return (
+                    <button key={s} onClick={() => { setSymbol(s); scan(s); }} style={{
+                      padding: '8px 10px', textAlign: 'left',
+                      background: active ? '#1e1b4b' : ov ? `${dirColor}0a` : '#0a0a0f',
+                      border: `1px solid ${active ? '#6366f1' : ov ? `${dirColor}33` : '#1e1e2e'}`,
+                      borderRadius: 7, cursor: 'pointer',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: active ? '#818cf8' : '#94a3b8' }}>{label}</span>
+                        {score !== null && (
+                          <span style={{ fontSize: 14, fontWeight: 800, color: scoreColor }}>{score}</span>
+                        )}
+                        {!ov && marketScanning && (
+                          <span style={{ fontSize: 10, color: '#334155' }}>…</span>
+                        )}
+                      </div>
+                      {dir && dir !== 'NEUTRAL' && (
+                        <div style={{ fontSize: 10, color: dirColor, fontWeight: 600, marginTop: 2 }}>
+                          {dir === 'LONG' ? '▲' : '▼'} {dir}
+                        </div>
+                      )}
+                      {dir === 'NEUTRAL' && (
+                        <div style={{ fontSize: 10, color: '#334155', marginTop: 2 }}>— NEUTRAL</div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                {POPULAR.map(s => (
+                  <button key={s} onClick={() => { setSymbol(s); scan(s); }} style={{
+                    padding: '5px 10px', background: symbol === s ? '#1e1b4b' : '#111118',
+                    border: `1px solid ${symbol === s ? '#6366f1' : '#1e1e2e'}`,
+                    borderRadius: 6, color: symbol === s ? '#818cf8' : '#64748b',
+                    cursor: 'pointer', fontSize: 12, fontWeight: symbol === s ? 700 : 400,
+                  }}>
+                    {s.replace('1000', '').replace('USDT', '')}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Autoscan panel */}
             <div style={{ padding: 14, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
