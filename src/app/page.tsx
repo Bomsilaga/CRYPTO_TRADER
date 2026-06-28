@@ -431,6 +431,7 @@ export default function Home() {
   const [tradeLoading, setTradeLoading] = useState(false);
   const [tradeResult, setTradeResult] = useState<TradeResult | null>(null);
   const [capAt5x, setCapAt5x] = useState(true);
+  const [manualMarginUsdt, setManualMarginUsdt] = useState<number | ''>('');
 
   // Trade journal
   const [trades, setTrades] = useState<TradeEntry[]>([]);
@@ -714,12 +715,21 @@ export default function Home() {
         const ep    = result.masterSignal.entry;
         const sl    = result.masterSignal.stopLoss;
         const slDist = Math.abs(ep - sl) / ep;
-        const riskAmt = accountSize * riskPct / 100;
-        // qty: risk-based sizing — loss at SL equals riskAmt
-        const calcQty  = slDist > 0 ? riskAmt / (ep * slDist) : 0;
+        let calcQty: number;
+        let positionNotional: number;
+        let marginUsed: number;
+        if (typeof manualMarginUsdt === 'number' && manualMarginUsdt > 0) {
+          // User-specified margin → derive position
+          marginUsed       = manualMarginUsdt;
+          positionNotional = marginUsed * effectiveLev;
+          calcQty          = positionNotional / ep;
+        } else {
+          const riskAmt = accountSize * riskPct / 100;
+          calcQty        = slDist > 0 ? riskAmt / (ep * slDist) : 0;
+          positionNotional = calcQty * ep;
+          marginUsed       = positionNotional / effectiveLev;
+        }
         const qty      = data.qty ?? parseFloat(calcQty.toFixed(3));
-        const positionNotional = qty * ep;
-        const marginUsed       = positionNotional / effectiveLev;
         const tzAbbr = new Date().toLocaleTimeString('en', { timeZoneName: 'short', timeZone: timezone }).split(' ').pop() ?? timezone;
         const entry: TradeEntry = {
           id: Date.now().toString(),
@@ -1271,13 +1281,63 @@ export default function Home() {
                       {result.direction === 'LONG' ? '▲' : '▼'} ENTER {result.direction} — {result.symbol}
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                    {/* Sizing row */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 8 }}>
                       <div>
                         <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 4 }}>Risk % of balance</label>
                         <input type="number" min={0.1} max={10} step={0.1} value={riskPct}
-                          onChange={e => setRiskPct(parseFloat(e.target.value) || 1)}
+                          onChange={e => { setRiskPct(parseFloat(e.target.value) || 1); setManualMarginUsdt(''); }}
                           style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
                       </div>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, marginBottom: 4 }}>
+                          <span style={{ color: manualMarginUsdt !== '' ? '#6366f1' : '#64748b' }}>
+                            Margin USDT {manualMarginUsdt !== '' ? '(override active)' : '(optional override)'}
+                          </span>
+                        </label>
+                        <input type="number" min={1} step={1} value={manualMarginUsdt}
+                          onChange={e => setManualMarginUsdt(e.target.value === '' ? '' : parseFloat(e.target.value) || '')}
+                          placeholder={`auto ≈ $${(accountSize * riskPct / 100).toFixed(0)} risk`}
+                          style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f',
+                            border: `1px solid ${manualMarginUsdt !== '' ? '#6366f155' : '#1e1e2e'}`,
+                            borderRadius: 6, color: manualMarginUsdt !== '' ? '#818cf8' : '#e2e8f0',
+                            outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
+                      </div>
+                    </div>
+
+                    {/* Position preview */}
+                    {(() => {
+                      const ep = result.masterSignal.entry;
+                      const sl = result.masterSignal.stopLoss;
+                      const effLev = capAt5x ? Math.min(typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage, MAX_LEVERAGE) : (typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage);
+                      const slDist = Math.abs(ep - sl) / ep;
+                      let margin: number, notional: number, qty: number, riskDollars: number;
+                      if (typeof manualMarginUsdt === 'number' && manualMarginUsdt > 0) {
+                        margin   = manualMarginUsdt;
+                        notional = margin * effLev;
+                        qty      = notional / ep;
+                        riskDollars = notional * slDist;
+                      } else {
+                        riskDollars = accountSize * riskPct / 100;
+                        qty      = slDist > 0 ? riskDollars / (ep * slDist) : 0;
+                        notional = qty * ep;
+                        margin   = notional / effLev;
+                      }
+                      const fmtP = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
+                      return (
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '8px 10px', background: '#0a0a0f', borderRadius: 6, marginBottom: 10, fontSize: 11 }}>
+                          <span style={{ color: '#475569' }}>Qty <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{fmtP(qty)}</span></span>
+                          <span style={{ color: '#334155' }}>·</span>
+                          <span style={{ color: '#475569' }}>Notional <span style={{ color: '#e2e8f0', fontWeight: 700 }}>${notional.toFixed(0)}</span></span>
+                          <span style={{ color: '#334155' }}>·</span>
+                          <span style={{ color: '#475569' }}>Margin <span style={{ color: '#818cf8', fontWeight: 700 }}>${margin.toFixed(2)}</span></span>
+                          <span style={{ color: '#334155' }}>·</span>
+                          <span style={{ color: '#475569' }}>Risk at SL <span style={{ color: '#ef4444', fontWeight: 700 }}>${riskDollars.toFixed(2)}</span></span>
+                        </div>
+                      );
+                    })()}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
                       <div>
                         <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 4 }}>
                           Leverage
@@ -1295,6 +1355,14 @@ export default function Home() {
                           style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f',
                             border: `1px solid ${capAt5x ? '#16a34a44' : '#ef444444'}`,
                             borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                        {manualMarginUsdt !== '' && (
+                          <button onClick={() => setManualMarginUsdt('')}
+                            style={{ padding: '9px 12px', background: '#6366f122', border: '1px solid #6366f133', borderRadius: 6, color: '#818cf8', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                            Clear USDT override
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1458,8 +1526,13 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* Trade list */}
-                {trades.map(t => {
+                {/* Trade grid */}
+                {(() => {
+                  const CARD_ACCENT = ['#6366f1','#f59e0b','#06b6d4','#a855f7','#ec4899','#10b981','#f97316','#84cc16'];
+                  return (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 14 }}>
+                {trades.map((t, tIdx) => {
+                  const accentColor = CARD_ACCENT[tIdx % CARD_ACCENT.length];
                   const dirColor = t.direction === 'LONG' ? '#22c55e' : '#ef4444';
                   const statusColor: Record<string, string> = { open: '#6366f1', tp1: '#22c55e', tp2: '#22c55e', tp3: '#22c55e', sl: '#ef4444', manual: '#94a3b8' };
                   const isOpen = t.status === 'open';
@@ -1494,8 +1567,10 @@ export default function Home() {
                   return (
                     <div key={t.id} style={{
                       padding: 14, background: '#111118',
-                      border: `1px solid ${isOpen ? (unrealizedDollar !== null && unrealizedDollar >= 0 ? '#22c55e33' : '#ef444433') : '#1e1e2e'}`,
+                      border: `1px solid ${accentColor}44`,
+                      borderLeft: `4px solid ${accentColor}`,
                       borderRadius: 10,
+                      boxShadow: isOpen ? `0 0 18px ${accentColor}18` : 'none',
                     }}>
                       {/* Header row */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -1711,6 +1786,9 @@ export default function Home() {
                     </div>
                   );
                 })}
+                </div>
+                  );
+                })()}
 
                 {/* Clear all */}
                 <button onClick={() => { if (confirm('Clear all trade history?')) saveTrades([]); }} style={{
