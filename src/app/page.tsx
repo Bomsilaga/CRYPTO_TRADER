@@ -414,6 +414,8 @@ export default function Home() {
 
   // Trade journal
   const [trades, setTrades] = useState<TradeEntry[]>([]);
+  const [livePrices, setLivePrices] = useState<Record<string, { price: number; updatedAt: number }>>({});
+  const [liveRefreshing, setLiveRefreshing] = useState(false);
 
   // BTC comparison
   const [btcResult, setBtcResult] = useState<ScanResult | null>(null);
@@ -473,6 +475,34 @@ export default function Home() {
       if (saved) setTrades(JSON.parse(saved));
     } catch { /* ignore */ }
   }, []);
+
+  // Live price polling for open trades — refresh every 8 seconds
+  useEffect(() => {
+    const openSymbols = [...new Set(trades.filter(t => t.status === 'open').map(t => t.symbol))];
+    if (!openSymbols.length) return;
+
+    async function refresh() {
+      setLiveRefreshing(true);
+      try {
+        const res = await fetch(`/api/ticker?symbols=${openSymbols.join(',')}`);
+        const data = await res.json() as { ok: boolean; prices: { symbol: string; price: number | null }[] };
+        if (data.ok) {
+          setLivePrices(prev => {
+            const next = { ...prev };
+            data.prices.forEach(p => {
+              if (p.price !== null) next[p.symbol] = { price: p.price, updatedAt: Date.now() };
+            });
+            return next;
+          });
+        }
+      } catch { /* ignore */ }
+      setLiveRefreshing(false);
+    }
+
+    refresh();
+    const id = setInterval(refresh, 8000);
+    return () => clearInterval(id);
+  }, [trades]);
 
   function saveTrades(updated: TradeEntry[]) {
     setTrades(updated);
@@ -1335,13 +1365,55 @@ export default function Home() {
                   );
                 })()}
 
+                {/* Open trades header */}
+                {trades.some(t => t.status === 'open') && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#6366f1', letterSpacing: '0.08em' }}>OPEN POSITIONS</span>
+                    <span style={{ fontSize: 10, color: liveRefreshing ? '#22c55e' : '#334155' }}>
+                      {liveRefreshing ? '● live' : '○ 8s refresh'}
+                    </span>
+                  </div>
+                )}
+
                 {/* Trade list */}
                 {trades.map(t => {
                   const dirColor = t.direction === 'LONG' ? '#22c55e' : '#ef4444';
                   const statusColor: Record<string, string> = { open: '#6366f1', tp1: '#22c55e', tp2: '#22c55e', tp3: '#22c55e', sl: '#ef4444', manual: '#94a3b8' };
                   const isOpen = t.status === 'open';
+
+                  // Live P&L calculations
+                  const live = livePrices[t.symbol];
+                  const currentPrice = live?.price ?? null;
+                  const slDist = Math.abs(t.entry - t.stopLoss) / t.entry;
+                  const riskAmt = accountSize * t.riskPct / 100;
+                  const unrealizedR = currentPrice !== null
+                    ? ((currentPrice - t.entry) / t.entry / slDist) * (t.direction === 'LONG' ? 1 : -1)
+                    : null;
+                  const unrealizedDollar = unrealizedR !== null ? unrealizedR * riskAmt : null;
+                  const unrealizedPct = currentPrice !== null
+                    ? ((currentPrice - t.entry) / t.entry * 100 * t.leverage) * (t.direction === 'LONG' ? 1 : -1)
+                    : null;
+                  const pnlColor = unrealizedDollar === null ? '#475569' : unrealizedDollar >= 0 ? '#22c55e' : '#ef4444';
+
+                  // Price bar: position from SL to TP3
+                  const barMin = t.direction === 'LONG' ? t.stopLoss : t.tp3;
+                  const barMax = t.direction === 'LONG' ? t.tp3 : t.stopLoss;
+                  const priceBarPct = currentPrice !== null
+                    ? Math.min(100, Math.max(0, (currentPrice - barMin) / (barMax - barMin) * 100))
+                    : null;
+                  // Level markers
+                  const markerEntry = Math.min(100, Math.max(0, (t.entry - barMin) / (barMax - barMin) * 100));
+                  const markerTp1   = Math.min(100, Math.max(0, (t.tp1   - barMin) / (barMax - barMin) * 100));
+                  const markerTp2   = Math.min(100, Math.max(0, (t.tp2   - barMin) / (barMax - barMin) * 100));
+
+                  const secsAgo = live ? Math.round((Date.now() - live.updatedAt) / 1000) : null;
+
                   return (
-                    <div key={t.id} style={{ padding: 14, background: '#111118', border: `1px solid ${isOpen ? '#1e2e4e' : '#1e1e2e'}`, borderRadius: 10 }}>
+                    <div key={t.id} style={{
+                      padding: 14, background: '#111118',
+                      border: `1px solid ${isOpen ? (unrealizedDollar !== null && unrealizedDollar >= 0 ? '#22c55e33' : '#ef444433') : '#1e1e2e'}`,
+                      borderRadius: 10,
+                    }}>
                       {/* Header row */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                         <div>
@@ -1361,7 +1433,88 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* Levels */}
+                      {/* Live price + unrealized P&L (open trades only) */}
+                      {isOpen && (
+                        <div style={{ marginBottom: 12 }}>
+                          {/* Big numbers row */}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
+                            <div style={{ padding: '10px 12px', background: '#0a0a0f', borderRadius: 8 }}>
+                              <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>
+                                LIVE PRICE {secsAgo !== null && <span style={{ color: secsAgo < 15 ? '#22c55e' : '#475569' }}>{secsAgo}s ago</span>}
+                              </div>
+                              <div style={{ fontSize: 16, fontWeight: 800, color: '#e2e8f0' }}>
+                                {currentPrice !== null ? `$${currentPrice.toFixed(currentPrice < 1 ? 6 : currentPrice < 100 ? 4 : 2)}` : '—'}
+                              </div>
+                            </div>
+                            <div style={{ padding: '10px 12px', background: unrealizedDollar !== null ? `${pnlColor}11` : '#0a0a0f', borderRadius: 8, border: `1px solid ${unrealizedDollar !== null ? `${pnlColor}33` : 'transparent'}` }}>
+                              <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>UNREALIZED P&L</div>
+                              <div style={{ fontSize: 16, fontWeight: 800, color: pnlColor }}>
+                                {unrealizedDollar !== null
+                                  ? `${unrealizedDollar >= 0 ? '+' : ''}$${unrealizedDollar.toFixed(2)}`
+                                  : '—'}
+                              </div>
+                              {unrealizedPct !== null && (
+                                <div style={{ fontSize: 10, color: pnlColor, opacity: 0.7 }}>
+                                  {unrealizedPct >= 0 ? '+' : ''}{unrealizedPct.toFixed(2)}%
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ padding: '10px 12px', background: '#0a0a0f', borderRadius: 8 }}>
+                              <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>R MULTIPLE</div>
+                              <div style={{ fontSize: 16, fontWeight: 800, color: unrealizedR !== null ? (unrealizedR >= 0 ? '#22c55e' : '#ef4444') : '#475569' }}>
+                                {unrealizedR !== null ? `${unrealizedR >= 0 ? '+' : ''}${unrealizedR.toFixed(2)}R` : '—'}
+                              </div>
+                              <div style={{ fontSize: 10, color: '#334155' }}>max {t.netRR.toFixed(1)}R</div>
+                            </div>
+                          </div>
+
+                          {/* Price bar: SL ──── entry ─── current ──── TP1 ── TP2 ── TP3 */}
+                          <div style={{ position: 'relative', height: 28, background: '#0a0a0f', borderRadius: 6, overflow: 'hidden' }}>
+                            {/* Green zone entry→TP3, red zone SL→entry */}
+                            <div style={{ position: 'absolute', left: `${markerEntry}%`, right: `${100 - markerTp1}%`, top: 0, bottom: 0, background: '#22c55e18' }} />
+                            <div style={{ position: 'absolute', left: 0, right: `${100 - markerEntry}%`, top: 0, bottom: 0, background: '#ef444418' }} />
+                            {/* Level markers */}
+                            {[
+                              { pct: markerEntry, color: '#e2e8f0', label: 'E' },
+                              { pct: markerTp1,   color: '#22c55e', label: '1' },
+                              { pct: markerTp2,   color: '#16a34a', label: '2' },
+                            ].map(({ pct, color, label }) => (
+                              <div key={label} style={{ position: 'absolute', left: `${pct}%`, top: 0, bottom: 0, width: 1, background: `${color}66` }}>
+                                <span style={{ position: 'absolute', top: 2, left: 2, fontSize: 8, color, opacity: 0.8 }}>{label}</span>
+                              </div>
+                            ))}
+                            {/* SL marker */}
+                            <div style={{ position: 'absolute', left: t.direction === 'LONG' ? 0 : '100%', top: 0, bottom: 0, width: 2, background: '#ef444488' }} />
+                            {/* Current price dot */}
+                            {priceBarPct !== null && (
+                              <div style={{
+                                position: 'absolute', left: `${priceBarPct}%`,
+                                top: '50%', transform: 'translate(-50%, -50%)',
+                                width: 10, height: 10, borderRadius: '50%',
+                                background: pnlColor, boxShadow: `0 0 6px ${pnlColor}`,
+                                transition: 'left 0.6s ease',
+                              }} />
+                            )}
+                            {/* Labels */}
+                            <div style={{ position: 'absolute', left: 4, top: '50%', transform: 'translateY(-50%)', fontSize: 9, color: '#ef444488' }}>SL</div>
+                            <div style={{ position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)', fontSize: 9, color: '#22c55e88' }}>TP3</div>
+                          </div>
+
+                          {/* Level distances */}
+                          {currentPrice !== null && (
+                            <div style={{ display: 'flex', gap: 12, fontSize: 10, color: '#334155', marginTop: 5 }}>
+                              <span>SL: <span style={{ color: '#ef4444' }}>
+                                {(Math.abs(currentPrice - t.stopLoss) / currentPrice * 100).toFixed(2)}% away
+                              </span></span>
+                              <span>TP1: <span style={{ color: '#22c55e' }}>
+                                {(Math.abs(currentPrice - t.tp1) / currentPrice * 100).toFixed(2)}% away
+                              </span></span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Levels grid */}
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 10, fontSize: 12 }}>
                         {[
                           { label: 'Entry', value: t.entry, color: '#e2e8f0' },
@@ -1379,7 +1532,7 @@ export default function Home() {
                         <span>Score {t.score}/100</span>
                         <span>R:R {t.netRR.toFixed(2)}×</span>
                         <span>Risk {t.riskPct}%</span>
-                        {t.pnlDollars !== undefined && (
+                        {!isOpen && t.pnlDollars !== undefined && (
                           <span style={{ color: t.pnlDollars >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>
                             {t.pnlDollars >= 0 ? '+' : ''}${t.pnlDollars.toFixed(2)}
                           </span>
