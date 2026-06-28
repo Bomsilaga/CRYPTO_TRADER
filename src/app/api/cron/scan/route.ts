@@ -28,6 +28,7 @@ import webpush from 'web-push';
 import { fetchAllTickers, fetchKlines } from '@/lib/bybit';
 import { runEngine } from '@/lib/signalEngine';
 import { getAllSubscriptions } from '@/lib/subscriptions';
+import { setLastScan } from '@/lib/scanStore';
 
 const MIN_VOLUME  = 5_000_000; // raised from 1M — better liquidity = tighter spreads
 const ALERT_SCORE = 80;
@@ -111,16 +112,21 @@ export async function GET(_req: NextRequest) {
       }
     }
 
+    const elapsed = Date.now() - start;
+
+    // Cache result so the UI can display the last autoscan
+    setLastScan({ timestamp, scanned: scannedCount, elapsed, alerts, timedOut });
+
     return NextResponse.json({
       ok: true,
       scanned: scannedCount,
       attempted: candidates.length,
       timedOut,
       timedOutNote: timedOut
-        ? `Scan aborted at ${scannedCount}/${candidates.length} pairs — time budget (${TIME_BUDGET_MS}ms) reached. Upgrade to Vercel Pro or use Railway for full scans.`
+        ? `Scan aborted at ${scannedCount}/${candidates.length} pairs — time budget (${TIME_BUDGET_MS}ms) reached.`
         : null,
       alerts: alerts.length,
-      elapsed: Date.now() - start,
+      elapsed,
       signals: alerts,
       timestamp,
     });

@@ -30,7 +30,15 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 async function bybitFetch(url: string, retries = 4): Promise<unknown> {
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const res = await fetch(url, { cache: 'no-store' });
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; 4scans/1.0)',
+        'Accept': 'application/json',
+        'Referer': 'https://www.bybit.com/',
+      },
+    });
+    if (res.status === 403) throw new Error(`Bybit 403 — region blocked. Set BYBIT_PROXY_URL or use a non-US Vercel region.`);
     if (res.status === 429) {
       if (attempt === retries) throw new Error(`Bybit rate limit (429) — ${url}`);
       await sleep(1000 * 2 ** attempt);

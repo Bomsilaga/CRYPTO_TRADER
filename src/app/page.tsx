@@ -1,6 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
+interface AutoScanAlert {
+  symbol: string;
+  score: number;
+  direction: string;
+  tier: string;
+}
+
+interface AutoScanResult {
+  ok: boolean;
+  timestamp?: string;
+  scanned?: number;
+  elapsed?: number;
+  alerts?: AutoScanAlert[];
+  timedOut?: boolean;
+  message?: string;
+}
 
 interface ScanResult {
   ok: boolean;
@@ -74,6 +91,21 @@ export default function Home() {
   const [result, setResult] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
+  const [autoScan, setAutoScan] = useState<AutoScanResult | null>(null);
+
+  // Poll for latest autoscan result every 60s
+  useEffect(() => {
+    const fetchLatest = async () => {
+      try {
+        const res = await fetch('/api/scan/latest');
+        const data = await res.json() as AutoScanResult;
+        setAutoScan(data);
+      } catch { /* ignore */ }
+    };
+    fetchLatest();
+    const id = setInterval(fetchLatest, 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   async function scan(sym = symbol) {
     setLoading(true);
@@ -144,6 +176,54 @@ export default function Home() {
             {s.replace('USDT', '')}
           </button>
         ))}
+      </div>
+
+      {/* Autoscan panel */}
+      <div style={{ padding: 14, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10, marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8' }}>⚡ AUTOSCAN</span>
+          <span style={{ fontSize: 11, color: '#475569' }}>every 15 min · score ≥ 80</span>
+        </div>
+        {!autoScan || !autoScan.ok ? (
+          <div style={{ color: '#475569', fontSize: 13 }}>
+            {autoScan?.message ?? 'Waiting for first cron scan…'}
+          </div>
+        ) : (
+          <>
+            <div style={{ color: '#475569', fontSize: 11, marginBottom: 8 }}>
+              {autoScan.timestamp} · {autoScan.scanned} pairs · {((autoScan.elapsed ?? 0) / 1000).toFixed(1)}s
+            </div>
+            {autoScan.alerts && autoScan.alerts.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {autoScan.alerts.map(a => (
+                  <button
+                    key={a.symbol}
+                    onClick={() => { setSymbol(a.symbol); scan(a.symbol); }}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '8px 12px', background: '#0a0a0f', border: '1px solid #1e1e2e',
+                      borderRadius: 6, cursor: 'pointer', textAlign: 'left',
+                    }}
+                  >
+                    <span style={{ fontWeight: 700, color: '#e2e8f0' }}>{a.symbol}</span>
+                    <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <span style={{ color: a.direction === 'LONG' ? '#22c55e' : '#ef4444', fontSize: 12, fontWeight: 600 }}>
+                        {a.direction === 'LONG' ? '▲' : '▼'} {a.direction}
+                      </span>
+                      <span style={{
+                        padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
+                        background: a.tier === 'A+' ? '#f59e0b22' : '#6366f122',
+                        color: a.tier === 'A+' ? '#f59e0b' : '#818cf8',
+                      }}>{a.tier} · {a.score}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: '#475569', fontSize: 13 }}>No signals above 80 in last scan</div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Error */}
