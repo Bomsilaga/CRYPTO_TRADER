@@ -1128,29 +1128,49 @@ export default function Home() {
                     ? ms.entry * (1 - liqDist)
                     : ms.entry * (1 + liqDist);
                   const slDist = Math.abs(ms.entry - ms.stopLoss) / ms.entry;
-                  // Danger: liq fires before SL
                   const liqBeforeSL = result.direction === 'LONG'
                     ? liqPrice > ms.stopLoss
                     : liqPrice < ms.stopLoss;
                   const maxSafeLev = Math.floor(1 / (slDist + MMR));
                   const fmt = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
+
+                  // P&L per level — use manual margin or risk-based sizing
+                  const riskAmt = accountSize * riskPct / 100;
+                  const qty = typeof manualMarginUsdt === 'number' && manualMarginUsdt > 0
+                    ? (manualMarginUsdt * effLev) / ms.entry
+                    : slDist > 0 ? riskAmt / (ms.entry * slDist) : 0;
+                  const pnl = (price: number) =>
+                    qty * (price - ms.entry) * (result.direction === 'LONG' ? 1 : -1);
+
+                  const levels = [
+                    { label: 'Entry',     value: ms.entry,    pnlVal: null,                color: '#e2e8f0', pct: null },
+                    { label: 'Stop Loss', value: ms.stopLoss, pnlVal: pnl(ms.stopLoss),    color: '#ef4444', pct: -(slDist * 100) },
+                    { label: 'TP1 · 50%', value: ms.tp1,      pnlVal: pnl(ms.tp1),         color: '#4ade80', pct: Math.abs(ms.tp1 - ms.entry) / ms.entry * 100 },
+                    { label: 'TP2 · 25%', value: ms.tp2,      pnlVal: pnl(ms.tp2),         color: '#22c55e', pct: Math.abs(ms.tp2 - ms.entry) / ms.entry * 100 },
+                    { label: 'TP3 · 25%', value: ms.tp3,      pnlVal: pnl(ms.tp3),         color: '#16a34a', pct: Math.abs(ms.tp3 - ms.entry) / ms.entry * 100 },
+                    { label: 'Net R:R',   value: null,         pnlVal: null,                color: '#6366f1', pct: null },
+                  ];
+
                   return (
                     <div style={{ padding: 16, background: '#111118', border: `1px solid ${liqBeforeSL ? '#ef444444' : '#1e1e2e'}`, borderRadius: 10 }}>
                       <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: '#94a3b8' }}>TRADE LEVELS</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                        {[
-                          { label: 'Entry',      value: ms.entry,    color: '#e2e8f0' },
-                          { label: 'Stop Loss',  value: ms.stopLoss, color: '#ef4444' },
-                          { label: 'TP1 (50%)', value: ms.tp1,      color: '#22c55e' },
-                          { label: 'TP2 (25%)', value: ms.tp2,      color: '#22c55e' },
-                          { label: 'TP3 (25%)', value: ms.tp3,      color: '#22c55e' },
-                          { label: `Net R:R`,   value: null,         color: '#6366f1' },
-                        ].map(({ label, value, color }) => (
-                          <div key={label} style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6 }}>
-                            <div style={{ color: '#475569', fontSize: 11 }}>{label}</div>
-                            <div style={{ color, fontWeight: 700, fontSize: 14 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 7 }}>
+                        {levels.map(({ label, value, pnlVal, color, pct }) => (
+                          <div key={label} style={{ padding: '9px 10px', background: '#0a0a0f', borderRadius: 7, borderTop: `2px solid ${color}33` }}>
+                            <div style={{ color: '#475569', fontSize: 10, marginBottom: 3 }}>{label}</div>
+                            <div style={{ color, fontWeight: 800, fontSize: 13 }}>
                               {value !== null ? `$${fmt(value)}` : `${ms.netRR.toFixed(2)}×`}
                             </div>
+                            {pct !== null && (
+                              <div style={{ fontSize: 10, color: color, opacity: 0.7, marginTop: 1 }}>
+                                {pct > 0 ? '+' : ''}{pct.toFixed(2)}%
+                              </div>
+                            )}
+                            {pnlVal !== null && qty > 0 && (
+                              <div style={{ fontSize: 11, fontWeight: 700, color: pnlVal >= 0 ? '#22c55e' : '#ef4444', marginTop: 3 }}>
+                                {pnlVal >= 0 ? '+' : ''}${Math.abs(pnlVal).toFixed(2)}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1169,7 +1189,6 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* Danger alert: liq before SL */}
                       {liqBeforeSL && (
                         <div style={{ marginTop: 10, padding: '10px 12px', background: '#ef444422', border: '1px solid #ef444455', borderRadius: 6 }}>
                           <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 12, marginBottom: 4 }}>
@@ -1277,77 +1296,145 @@ export default function Home() {
                   const m  = result.avgMoves!;
                   const sm = result.spotAvgMoves ?? null;
                   const ms = result.masterSignal;
-                  const tpPcts = [
-                    { label: 'TP1', pct: Math.abs(ms.tp1 - ms.entry) / ms.entry * 100 },
-                    { label: 'TP2', pct: Math.abs(ms.tp2 - ms.entry) / ms.entry * 100 },
-                    { label: 'TP3', pct: Math.abs(ms.tp3 - ms.entry) / ms.entry * 100 },
+                  const isLong = result.direction === 'LONG';
+
+                  // P&L sizing (reuse same calc as Trade Levels)
+                  const slDist2 = Math.abs(ms.entry - ms.stopLoss) / ms.entry;
+                  const effLev2 = capAt5x
+                    ? Math.min((userLeverage || ms.leverage), MAX_LEVERAGE)
+                    : (userLeverage || ms.leverage);
+                  const riskAmt2 = accountSize * riskPct / 100;
+                  const qty2 = typeof manualMarginUsdt === 'number' && manualMarginUsdt > 0
+                    ? (manualMarginUsdt * effLev2) / ms.entry
+                    : slDist2 > 0 ? riskAmt2 / (ms.entry * slDist2) : 0;
+                  const pnl2 = (price: number) => qty2 * (price - ms.entry) * (isLong ? 1 : -1);
+
+                  const tpRows = [
+                    { label: 'TP1', price: ms.tp1, pct: Math.abs(ms.tp1 - ms.entry) / ms.entry * 100, split: '50%' },
+                    { label: 'TP2', price: ms.tp2, pct: Math.abs(ms.tp2 - ms.entry) / ms.entry * 100, split: '25%' },
+                    { label: 'TP3', price: ms.tp3, pct: Math.abs(ms.tp3 - ms.entry) / ms.entry * 100, split: '25%' },
                   ];
-                  const maxBar = Math.max(m.daily, ...tpPcts.map(t => t.pct)) * 1.1;
-                  const tpLabel = (ratio: number) =>
-                    ratio <= 0.5 ? 'quick scalp' :
-                    ratio <= 0.75 ? 'intraday' :
-                    ratio <= 1.0  ? 'full day' :
-                    ratio <= 1.5  ? 'overnight' :
-                    ratio <= 2.5  ? 'multi-day' : 'extended';
+                  const maxBar = Math.max(m.daily, ...tpRows.map(t => t.pct)) * 1.15;
+
+                  const verdictOf = (ratio: number) =>
+                    ratio <= 0.4  ? { text: 'Scalp',       color: '#06b6d4' } :
+                    ratio <= 0.75 ? { text: 'Intraday',    color: '#22c55e' } :
+                    ratio <= 1.1  ? { text: 'Full Session', color: '#4ade80' } :
+                    ratio <= 1.8  ? { text: 'Overnight',   color: '#eab308' } :
+                    ratio <= 3.0  ? { text: 'Multi-Day',   color: '#f97316' } :
+                                    { text: 'Extended',    color: '#ef4444' };
+                  const sessionsOf = (ratio: number) =>
+                    ratio <= 1   ? '< 1 day'  :
+                    ratio <= 2   ? '1–2 days' :
+                    ratio <= 3   ? '2–3 days' : '3+ days';
+
                   return (
                     <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8', marginBottom: 12, letterSpacing: '0.06em' }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8', marginBottom: 14, letterSpacing: '0.06em' }}>
                         AVG HISTORICAL RANGE
                       </div>
 
-                      {/* Header row */}
-                      <div style={{ display: 'grid', gridTemplateColumns: sm ? '80px 1fr 1fr' : '80px 1fr', gap: 6, marginBottom: 6, fontSize: 10, color: '#475569', fontWeight: 700, letterSpacing: '0.05em' }}>
+                      {/* Futures vs Spot comparison table */}
+                      <div style={{ display: 'grid', gridTemplateColumns: sm ? '56px 1fr 1fr 1fr' : '56px 1fr 1fr 1fr', gap: 6, marginBottom: 14 }}>
                         <div />
-                        <div style={{ textAlign: 'center', color: '#6366f1' }}>FUTURES (perp)</div>
-                        {sm && <div style={{ textAlign: 'center', color: '#f59e0b' }}>SPOT</div>}
+                        {['4H', '8H', 'DAILY'].map(lbl => (
+                          <div key={lbl} style={{ textAlign: 'center', fontSize: 10, color: '#475569', fontWeight: 700, letterSpacing: '0.06em', paddingBottom: 4 }}>{lbl}</div>
+                        ))}
+                        {/* Futures row */}
+                        <div style={{ fontSize: 10, color: '#818cf8', fontWeight: 700, display: 'flex', alignItems: 'center' }}>PERP</div>
+                        {[m.h4, m.h8, m.daily].map((val, i) => (
+                          <div key={i} style={{ padding: '6px 4px', background: '#0a0a0f', borderRadius: 6, border: '1px solid #6366f122', textAlign: 'center' }}>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: '#818cf8' }}>±{val.toFixed(2)}%</div>
+                          </div>
+                        ))}
+                        {/* Spot row */}
+                        {sm && <>
+                          <div style={{ fontSize: 10, color: '#fbbf24', fontWeight: 700, display: 'flex', alignItems: 'center' }}>SPOT</div>
+                          {[sm.h4, sm.h8, sm.daily].map((val, i) => {
+                            const diff = val - [m.h4, m.h8, m.daily][i];
+                            return (
+                              <div key={i} style={{ padding: '6px 4px', background: '#0a0a0f', borderRadius: 6, border: '1px solid #f59e0b22', textAlign: 'center' }}>
+                                <div style={{ fontSize: 14, fontWeight: 800, color: '#fbbf24' }}>±{val.toFixed(2)}%</div>
+                                <div style={{ fontSize: 9, color: Math.abs(diff) < 0.05 ? '#475569' : diff > 0 ? '#f97316' : '#22c55e', marginTop: 1 }}>
+                                  {diff >= 0 ? '+' : ''}{diff.toFixed(2)}%
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </>}
                       </div>
 
-                      {/* Stats rows: 4H, 8H, Daily */}
-                      {[
-                        { label: '4H',    fut: m.h4,    spot: sm?.h4 },
-                        { label: '8H',    fut: m.h8,    spot: sm?.h8 },
-                        { label: 'DAILY', fut: m.daily, spot: sm?.daily },
-                      ].map(({ label, fut, spot }) => (
-                        <div key={label} style={{ display: 'grid', gridTemplateColumns: sm ? '80px 1fr 1fr' : '80px 1fr', gap: 6, marginBottom: 4, alignItems: 'center' }}>
-                          <span style={{ fontSize: 11, color: '#475569', fontWeight: 700 }}>{label}</span>
-                          <div style={{ padding: '7px 10px', background: '#0a0a0f', borderRadius: 7, border: '1px solid #6366f122', textAlign: 'center' }}>
-                            <span style={{ fontSize: 15, fontWeight: 800, color: '#818cf8' }}>±{fut.toFixed(2)}%</span>
-                          </div>
-                          {sm && spot !== undefined && (
-                            <div style={{ padding: '7px 10px', background: '#0a0a0f', borderRadius: 7, border: '1px solid #f59e0b22', textAlign: 'center' }}>
-                              <span style={{ fontSize: 15, fontWeight: 800, color: '#fbbf24' }}>±{spot.toFixed(2)}%</span>
-                              {fut > 0 && (
-                                <span style={{ fontSize: 10, color: spot > fut ? '#ef4444' : '#22c55e', marginLeft: 6 }}>
-                                  {spot > fut ? '▲' : '▼'}{Math.abs(spot - fut).toFixed(2)}%
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                      {/* TP reachability cards */}
+                      <div style={{ fontSize: 11, color: '#475569', fontWeight: 700, letterSpacing: '0.06em', marginBottom: 10 }}>
+                        TP REACHABILITY
+                      </div>
 
-                      {/* TP reachability bars — based on futures daily */}
-                      <div style={{ fontSize: 11, color: '#475569', marginBottom: 8, fontWeight: 600, marginTop: 14 }}>TP REACHABILITY vs AVG DAILY (FUTURES)</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <div style={{ position: 'relative', height: 5, background: '#1e1e2e', borderRadius: 3, marginBottom: 14 }}>
-                          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${(m.daily / maxBar) * 100}%`, background: '#47556966', borderRadius: 3 }} />
-                          <span style={{ position: 'absolute', left: `${(m.daily / maxBar) * 100}%`, top: -14, fontSize: 10, color: '#64748b', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>
-                            avg day {m.daily.toFixed(2)}%
-                          </span>
-                        </div>
-                        {tpPcts.map(({ label, pct }) => {
-                          const ratio = m.daily > 0 ? pct / m.daily : 0;
-                          const barColor = ratio <= 1 ? '#22c55e' : ratio <= 1.5 ? '#eab308' : '#f97316';
+                      {/* Scale reference bar */}
+                      <div style={{ position: 'relative', height: 24, marginBottom: 18 }}>
+                        <div style={{ position: 'absolute', inset: '10px 0 0 0', background: '#1e1e2e', borderRadius: 4 }} />
+                        {[
+                          { val: m.h4,    label: `4H ${m.h4.toFixed(2)}%`,       color: '#475569' },
+                          { val: m.h8,    label: `8H ${m.h8.toFixed(2)}%`,       color: '#64748b' },
+                          { val: m.daily, label: `Day ${m.daily.toFixed(2)}%`,   color: '#94a3b8' },
+                        ].map(({ val, label, color }) => (
+                          <div key={label} style={{ position: 'absolute', left: `${(val / maxBar) * 100}%`, top: 0, bottom: 0 }}>
+                            <div style={{ position: 'absolute', top: 10, bottom: 0, width: 2, background: color, borderRadius: 1 }} />
+                            <span style={{ position: 'absolute', top: 0, fontSize: 9, color, whiteSpace: 'nowrap', transform: 'translateX(-50%)' }}>{label}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {tpRows.map(({ label, price, pct, split }) => {
+                          const ratioDay  = m.daily > 0 ? pct / m.daily : 0;
+                          const ratio4h   = m.h4    > 0 ? pct / m.h4    : 0;
+                          const ratio8h   = m.h8    > 0 ? pct / m.h8    : 0;
+                          const spotRatio = sm && sm.daily > 0 ? pct / sm.daily : null;
+                          const v = verdictOf(ratioDay);
                           const barW = Math.min(100, (pct / maxBar) * 100);
+                          const dollarPnl = qty2 > 0 ? pnl2(price) : null;
+                          const fmt2 = (x: number) => x < 1 ? x.toFixed(6) : x < 100 ? x.toFixed(4) : x.toFixed(2);
+
                           return (
-                            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <span style={{ width: 28, fontSize: 11, color: '#22c55e', fontWeight: 700, flexShrink: 0 }}>{label}</span>
-                              <div style={{ flex: 1, position: 'relative', height: 22, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
-                                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${barW}%`, background: barColor + '55', borderRadius: 4 }} />
-                                <div style={{ position: 'absolute', left: `${(m.daily / maxBar) * 100}%`, top: 0, bottom: 0, width: 1, background: '#47556988' }} />
-                                <span style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', fontSize: 10, color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                                  {pct.toFixed(2)}% · {ratio.toFixed(2)}× · {tpLabel(ratio)}
-                                </span>
+                            <div key={label} style={{ padding: 12, background: '#0a0a0f', borderRadius: 9, border: `1px solid ${v.color}33`, borderLeft: `4px solid ${v.color}` }}>
+                              {/* Row 1: label + price + pct + P&L + verdict */}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                                <div>
+                                  <span style={{ fontWeight: 800, fontSize: 13, color: v.color }}>{label}</span>
+                                  <span style={{ marginLeft: 6, fontSize: 10, color: '#475569' }}>{split} exit</span>
+                                  <div style={{ marginTop: 3, fontSize: 13, color: '#e2e8f0', fontWeight: 700 }}>
+                                    ${fmt2(price)}
+                                    <span style={{ marginLeft: 8, fontSize: 11, color: v.color }}>+{pct.toFixed(2)}%</span>
+                                    {dollarPnl !== null && (
+                                      <span style={{ marginLeft: 8, fontSize: 12, color: '#22c55e', fontWeight: 800 }}>(+${dollarPnl.toFixed(2)})</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <div style={{ padding: '3px 10px', background: v.color + '22', border: `1px solid ${v.color}44`, borderRadius: 20, fontSize: 11, color: v.color, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                                    {v.text}
+                                  </div>
+                                  <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>{sessionsOf(ratioDay)}</div>
+                                </div>
+                              </div>
+
+                              {/* Row 2: progress bar with markers */}
+                              <div style={{ position: 'relative', height: 14, background: '#1a1a28', borderRadius: 7, overflow: 'hidden', marginBottom: 8 }}>
+                                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${barW}%`, background: `linear-gradient(90deg, ${v.color}88, ${v.color}cc)`, borderRadius: 7 }} />
+                                {[m.h4, m.h8, m.daily].map((ref, i) => (
+                                  <div key={i} style={{ position: 'absolute', left: `${(ref / maxBar) * 100}%`, top: 0, bottom: 0, width: 1.5, background: ['#334155','#475569','#64748b'][i] }} />
+                                ))}
+                              </div>
+
+                              {/* Row 3: multiples */}
+                              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 11 }}>
+                                <span><span style={{ color: '#475569' }}>vs 4H </span><span style={{ color: ratio4h <= 1 ? '#22c55e' : '#eab308', fontWeight: 700 }}>{ratio4h.toFixed(1)}×</span></span>
+                                <span><span style={{ color: '#475569' }}>vs 8H </span><span style={{ color: ratio8h <= 1 ? '#22c55e' : '#eab308', fontWeight: 700 }}>{ratio8h.toFixed(1)}×</span></span>
+                                <span><span style={{ color: '#475569' }}>vs Day </span><span style={{ color: v.color, fontWeight: 700 }}>{ratioDay.toFixed(2)}×</span></span>
+                                {spotRatio !== null && (
+                                  <span><span style={{ color: '#475569' }}>vs Spot Day </span><span style={{ color: '#fbbf24', fontWeight: 700 }}>{spotRatio.toFixed(2)}×</span></span>
+                                )}
+                                <span style={{ marginLeft: 'auto', color: '#334155', fontWeight: 600 }}>≈ {sessionsOf(ratioDay)}</span>
                               </div>
                             </div>
                           );
