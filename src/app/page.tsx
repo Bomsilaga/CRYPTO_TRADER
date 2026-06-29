@@ -381,7 +381,6 @@ function ScoreBar({ score }: { score: number }) {
 /* ─── Main component ─────────────────────────────────────────────────────── */
 
 type Tab = 'scan' | 'calc' | 'trades' | 'settings';
-const MAX_LEVERAGE = 5; // hard cap — override engine recommendations
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>('scan');
@@ -432,7 +431,6 @@ export default function Home() {
   const [forceTrade, setForceTrade] = useState(false);
   const [tradeLoading, setTradeLoading] = useState(false);
   const [tradeResult, setTradeResult] = useState<TradeResult | null>(null);
-  const [capAt5x, setCapAt5x] = useState(true);
   const [manualMarginUsdt, setManualMarginUsdt] = useState<number | ''>('');
 
   // Trade journal
@@ -465,7 +463,6 @@ export default function Home() {
         if (typeof s.liveMode === 'boolean') setLiveMode(s.liveMode);
         if (s.riskPct)   setRiskPct(s.riskPct);
         if (s.orderType) setOrderType(s.orderType);
-        if (typeof s.capAt5x === 'boolean') setCapAt5x(s.capAt5x);
         if (s.aiProvider) setAiProvider(s.aiProvider as AiProvider);
         if (s.accountSize)    setAccountSize(s.accountSize);
         if (s.dailyLossLimit) setDailyLossLimit(s.dailyLossLimit);
@@ -483,7 +480,7 @@ export default function Home() {
   function saveSettings() {
     try {
       localStorage.setItem('4scans-settings', JSON.stringify({
-        apiKey, apiSecret, liveMode, riskPct, orderType, capAt5x, aiProvider,
+        apiKey, apiSecret, liveMode, riskPct, orderType, aiProvider,
         accountSize, dailyLossLimit, dailyTarget, maxTrades, targetSpotPct, timezone,
         anthropicKey, openaiKey, deepseekKey,
       }));
@@ -585,7 +582,7 @@ export default function Home() {
         if (btcData.ok) setBtcResult(btcData);
       }
       if (data?.masterSignal?.leverage) {
-        setUserLeverage(capAt5x ? Math.min(data.masterSignal.leverage, MAX_LEVERAGE) : data.masterSignal.leverage);
+        setUserLeverage(data.masterSignal.leverage);
       }
     } catch (e) {
       setResult({ ok: false, error: String(e) } as ScanResult);
@@ -682,9 +679,8 @@ export default function Home() {
     setTradeLoading(true);
     setTradeResult(null);
 
-    // Apply leverage cap
     const rawLev = typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage;
-    const effectiveLev = capAt5x ? Math.min(rawLev, MAX_LEVERAGE) : rawLev;
+    const effectiveLev = rawLev;
 
     try {
       const res = await fetch('/api/trade', {
@@ -1119,9 +1115,7 @@ export default function Home() {
                 {/* Trade levels */}
                 {(() => {
                   const ms = result.masterSignal;
-                  const effLev = capAt5x
-                    ? Math.min((userLeverage || ms.leverage), MAX_LEVERAGE)
-                    : (userLeverage || ms.leverage);
+                  const effLev = userLeverage || ms.leverage;
                   const MMR = 0.005;
                   const liqDist = Math.max(0, 1 / effLev - MMR);
                   const liqPrice = result.direction === 'LONG'
@@ -1300,9 +1294,7 @@ export default function Home() {
 
                   // P&L sizing (reuse same calc as Trade Levels)
                   const slDist2 = Math.abs(ms.entry - ms.stopLoss) / ms.entry;
-                  const effLev2 = capAt5x
-                    ? Math.min((userLeverage || ms.leverage), MAX_LEVERAGE)
-                    : (userLeverage || ms.leverage);
+                  const effLev2 = userLeverage || ms.leverage;
                   const riskAmt2 = accountSize * riskPct / 100;
                   const qty2 = typeof manualMarginUsdt === 'number' && manualMarginUsdt > 0
                     ? (manualMarginUsdt * effLev2) / ms.entry
@@ -1483,7 +1475,7 @@ export default function Home() {
                     {(() => {
                       const ep = result.masterSignal.entry;
                       const sl = result.masterSignal.stopLoss;
-                      const effLev = capAt5x ? Math.min(typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage, MAX_LEVERAGE) : (typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage);
+                      const effLev = typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage;
                       const slDist = Math.abs(ep - sl) / ep;
                       let margin: number, notional: number, qty: number, riskDollars: number;
                       if (typeof manualMarginUsdt === 'number' && manualMarginUsdt > 0) {
@@ -1515,19 +1507,14 @@ export default function Home() {
                       <div>
                         <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 4 }}>
                           Leverage
-                          {capAt5x
-                            ? <span style={{ color: '#22c55e', marginLeft: 6 }}>capped at {MAX_LEVERAGE}× ✓</span>
-                            : <span style={{ color: '#ef4444', marginLeft: 6 }}>cap OFF — engine rec: {result.masterSignal.leverage}×</span>}
+                          <span style={{ color: '#818cf8', marginLeft: 6 }}>engine rec: {result.masterSignal.leverage}×</span>
                         </label>
-                        <input type="number" min={1} max={capAt5x ? MAX_LEVERAGE : 100}
-                          value={capAt5x ? Math.min(typeof userLeverage === 'number' ? userLeverage : MAX_LEVERAGE, MAX_LEVERAGE) : userLeverage}
-                          onChange={e => {
-                            const v = parseInt(e.target.value) || 1;
-                            setUserLeverage(capAt5x ? Math.min(v, MAX_LEVERAGE) : v);
-                          }}
-                          placeholder={String(capAt5x ? Math.min(result.masterSignal.leverage, MAX_LEVERAGE) : result.masterSignal.leverage)}
+                        <input type="number" min={1} max={200}
+                          value={userLeverage}
+                          onChange={e => setUserLeverage(parseInt(e.target.value) || 1)}
+                          placeholder={String(result.masterSignal.leverage)}
                           style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f',
-                            border: `1px solid ${capAt5x ? '#16a34a44' : '#ef444444'}`,
+                            border: '1px solid #6366f144',
                             borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
@@ -2015,7 +2002,6 @@ export default function Home() {
               const checks = [
                 { label: 'Bybit API',      ok: !!(apiKey && apiSecret) || !!serverStatus?.bybit,  ok_text: (apiKey && apiSecret) ? 'Local keys configured' : 'Vercel env vars active',  bad_text: 'No keys — paper mode only' },
                 { label: 'Trading mode',   ok: true,                           ok_text: liveMode ? '⚡ Live' : '📄 Paper', bad_text: '' },
-                { label: 'Leverage cap',   ok: capAt5x,                        ok_text: `Hard cap at ${MAX_LEVERAGE}×`, bad_text: 'Cap OFF — high risk' },
                 { label: 'Risk per trade', ok: riskPct <= 2,                   ok_text: `${riskPct}% (safe)`,    bad_text: `${riskPct}% — above 2% rec` },
                 { label: 'Order type',     ok: orderType === 'Limit',          ok_text: 'Limit (saves fees)',    bad_text: 'Market — paying taker fees' },
                 { label: 'AI provider',    ok: true,                           ok_text: aiProvider === 'claude' ? 'Claude (Haiku)' : aiProvider === 'openai' ? 'GPT-4o mini' : 'DeepSeek', bad_text: '' },
@@ -2157,8 +2143,8 @@ export default function Home() {
                   </div>
                 </div>
                 <div style={{ marginTop: 8, fontSize: 11, color: '#475569' }}>
-                  At {capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5}× leverage: <span style={{ color: '#818cf8', fontWeight: 700 }}>{(targetSpotPct * (capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5)).toFixed(1)}% ROI on margin</span>
-                  {' '}· <span style={{ color: '#22c55e' }}>+${(accountSize * targetSpotPct * (capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5) / 100).toFixed(0)} gross</span>
+                  At 5× leverage: <span style={{ color: '#818cf8', fontWeight: 700 }}>{(targetSpotPct * 5).toFixed(1)}% ROI on margin</span>
+                  {' '}· <span style={{ color: '#22c55e' }}>+${(accountSize * targetSpotPct * 5 / 100).toFixed(0)} gross</span>
                   {' '}per trade on ${accountSize.toLocaleString()} account
                 </div>
               </div>
@@ -2222,7 +2208,7 @@ export default function Home() {
 
               {/* Live P&L math */}
               {(() => {
-                const effLev = capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5;
+                const effLev = 5;
                 const position = accountSize * effLev;
                 const takerFee = 0.00055;
                 const makerFee = 0.00020;
@@ -2308,27 +2294,11 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Leverage cap */}
-              <div style={{ marginBottom: 14, padding: 12, background: capAt5x ? '#16a34a11' : '#ef444411', border: `1px solid ${capAt5x ? '#16a34a33' : '#ef444433'}`, borderRadius: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: capAt5x ? '#22c55e' : '#ef4444', marginBottom: 3 }}>
-                      {capAt5x ? `✓ Leverage hard cap: ${MAX_LEVERAGE}× max` : '⚠ Leverage cap OFF'}
-                    </div>
-                    <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.5 }}>
-                      {capAt5x
-                        ? `Any engine recommendation above ${MAX_LEVERAGE}× is automatically reduced. Strongly recommended for accounts under $10,000.`
-                        : 'Engine leverages apply directly — up to 100×. Only disable if you are an experienced trader.'}
-                    </div>
-                  </div>
-                  <button onClick={() => setCapAt5x(v => !v)} style={{
-                    padding: '8px 20px', marginLeft: 14, flexShrink: 0, borderRadius: 7, cursor: 'pointer', fontWeight: 800, fontSize: 13,
-                    background: capAt5x ? '#16a34a' : '#0a0a0f',
-                    border: `1px solid ${capAt5x ? '#16a34a' : '#ef444444'}`,
-                    color: capAt5x ? '#fff' : '#ef4444',
-                  }}>
-                    {capAt5x ? 'ON' : 'OFF'}
-                  </button>
+              {/* Leverage note */}
+              <div style={{ marginBottom: 14, padding: 12, background: '#6366f111', border: '1px solid #6366f133', borderRadius: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', marginBottom: 3 }}>Leverage — set freely per trade</div>
+                <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.5 }}>
+                  Set your preferred leverage in the trade entry panel. The engine recommends a leverage per signal — you can override it up to 200×. Bybit enforces pair-specific limits server-side.
                 </div>
               </div>
 
@@ -2443,7 +2413,7 @@ export default function Home() {
 
               {/* Strategy: Position Sizing */}
               {(() => {
-                const effLev = capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5;
+                const effLev = 5;
                 const riskAmt = accountSize * riskPct / 100;
                 const position = accountSize * effLev;
                 const stopDistPct = 1; // typical 1% stop for alts
@@ -2481,7 +2451,7 @@ export default function Home() {
 
               {/* Strategy: Partial Exit Plan */}
               {(() => {
-                const effLev = capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5;
+                const effLev = 5;
                 const position = accountSize * effLev;
                 const takerFee = 0.00055;
                 const makerFee = 0.00020;
@@ -2513,7 +2483,7 @@ export default function Home() {
 
               {/* Strategy: Daily Session Rules */}
               {(() => {
-                const effLev = capAt5x ? Math.min(MAX_LEVERAGE, 5) : 5;
+                const effLev = 5;
                 const netPerTrade = accountSize * effLev * (targetSpotPct/100) - accountSize * effLev * 0.00075;
                 const tradesNeeded = netPerTrade > 0 ? Math.ceil(dailyTarget / netPerTrade) : '∞';
                 return (
