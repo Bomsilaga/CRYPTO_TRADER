@@ -198,6 +198,7 @@ export interface EngineResult {
   deep: DeepAnalysis;
   candles: RawCandle[];
   avgMoves: { daily: number; h8: number; h4: number };
+  spotAvgMoves: { daily: number; h8: number; h4: number } | null;
 }
 
 function buildVerdict(
@@ -312,15 +313,22 @@ export function runEngine(
   const alignQuality: AlignmentQuality =
     effectiveAlign >= 85 ? 'EXCELLENT' : effectiveAlign >= 70 ? 'STRONG' : effectiveAlign >= 55 ? 'MODERATE' : 'POOR';
 
-  const h1  = candleMap['1h']  ?? candleMap['15m'] ?? [];
-  const h4  = candleMap['4h']  ?? [];
-  const d1  = candleMap['1d']  ?? [];
+  const h1      = candleMap['1h']      ?? candleMap['15m'] ?? [];
+  const h4      = candleMap['4h']      ?? [];
+  const d1      = candleMap['1d']      ?? [];
+  const spotD1  = candleMap['spot_1d'] ?? [];
+  const spotH4  = candleMap['spot_4h'] ?? [];
 
   const avgMoves = {
     daily: avgRangePct(d1, 20),
     h8:    avg8hFromH4(h4, 20),
     h4:    avgRangePct(h4, 30),
   };
+  const spotAvgMoves = (spotD1.length > 0 || spotH4.length > 0) ? {
+    daily: avgRangePct(spotD1, 20),
+    h8:    avg8hFromH4(spotH4, 20),
+    h4:    avgRangePct(spotH4, 30),
+  } : null;
   const closes1h = h1.map((c) => c.close);
   const rsiVal   = rsi(closes1h);
   const macdVal  = macd(closes1h);
@@ -466,5 +474,6 @@ export function runEngine(
     deep,
     candles: h1.slice(-100),
     avgMoves,
+    spotAvgMoves,
   };
 }

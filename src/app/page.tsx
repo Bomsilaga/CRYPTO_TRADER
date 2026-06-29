@@ -60,6 +60,7 @@ interface ScanResult {
     volRatio: number;
   };
   avgMoves?: { daily: number; h8: number; h4: number };
+  spotAvgMoves?: { daily: number; h8: number; h4: number } | null;
   error?: string;
 }
 
@@ -1273,7 +1274,8 @@ export default function Home() {
 
                 {/* ── HISTORICAL AVG MOVEMENT ─────────────────────────── */}
                 {result.avgMoves && (() => {
-                  const m = result.avgMoves!;
+                  const m  = result.avgMoves!;
+                  const sm = result.spotAvgMoves ?? null;
                   const ms = result.masterSignal;
                   const tpPcts = [
                     { label: 'TP1', pct: Math.abs(ms.tp1 - ms.entry) / ms.entry * 100 },
@@ -1283,43 +1285,56 @@ export default function Home() {
                   const maxBar = Math.max(m.daily, ...tpPcts.map(t => t.pct)) * 1.1;
                   const tpLabel = (ratio: number) =>
                     ratio <= 0.5 ? 'quick scalp' :
-                    ratio <= 0.75 ? 'intraday reach' :
-                    ratio <= 1.0  ? 'full day move' :
-                    ratio <= 1.5  ? 'overnight hold' :
-                    ratio <= 2.5  ? 'multi-day swing' :
-                    'extended swing';
+                    ratio <= 0.75 ? 'intraday' :
+                    ratio <= 1.0  ? 'full day' :
+                    ratio <= 1.5  ? 'overnight' :
+                    ratio <= 2.5  ? 'multi-day' : 'extended';
                   return (
                     <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
                       <div style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8', marginBottom: 12, letterSpacing: '0.06em' }}>
                         AVG HISTORICAL RANGE
                       </div>
 
-                      {/* 3-stat row */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
-                        {[
-                          { label: '4H SESSION', val: m.h4,    sub: '~4 hours' },
-                          { label: '8H SESSION', val: m.h8,    sub: '~8 hours' },
-                          { label: 'DAILY',      val: m.daily, sub: '24 hours' },
-                        ].map(({ label, val, sub }) => (
-                          <div key={label} style={{ padding: '10px 10px', background: '#0a0a0f', borderRadius: 8, textAlign: 'center' }}>
-                            <div style={{ fontSize: 10, color: '#475569', marginBottom: 4 }}>{label}</div>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: '#e2e8f0' }}>±{val.toFixed(2)}%</div>
-                            <div style={{ fontSize: 10, color: '#334155', marginTop: 2 }}>{sub}</div>
-                          </div>
-                        ))}
+                      {/* Header row */}
+                      <div style={{ display: 'grid', gridTemplateColumns: sm ? '80px 1fr 1fr' : '80px 1fr', gap: 6, marginBottom: 6, fontSize: 10, color: '#475569', fontWeight: 700, letterSpacing: '0.05em' }}>
+                        <div />
+                        <div style={{ textAlign: 'center', color: '#6366f1' }}>FUTURES (perp)</div>
+                        {sm && <div style={{ textAlign: 'center', color: '#f59e0b' }}>SPOT</div>}
                       </div>
 
-                      {/* TP reachability bars */}
-                      <div style={{ fontSize: 11, color: '#475569', marginBottom: 8, fontWeight: 600 }}>TP REACHABILITY vs AVG DAILY RANGE</div>
+                      {/* Stats rows: 4H, 8H, Daily */}
+                      {[
+                        { label: '4H',    fut: m.h4,    spot: sm?.h4 },
+                        { label: '8H',    fut: m.h8,    spot: sm?.h8 },
+                        { label: 'DAILY', fut: m.daily, spot: sm?.daily },
+                      ].map(({ label, fut, spot }) => (
+                        <div key={label} style={{ display: 'grid', gridTemplateColumns: sm ? '80px 1fr 1fr' : '80px 1fr', gap: 6, marginBottom: 4, alignItems: 'center' }}>
+                          <span style={{ fontSize: 11, color: '#475569', fontWeight: 700 }}>{label}</span>
+                          <div style={{ padding: '7px 10px', background: '#0a0a0f', borderRadius: 7, border: '1px solid #6366f122', textAlign: 'center' }}>
+                            <span style={{ fontSize: 15, fontWeight: 800, color: '#818cf8' }}>±{fut.toFixed(2)}%</span>
+                          </div>
+                          {sm && spot !== undefined && (
+                            <div style={{ padding: '7px 10px', background: '#0a0a0f', borderRadius: 7, border: '1px solid #f59e0b22', textAlign: 'center' }}>
+                              <span style={{ fontSize: 15, fontWeight: 800, color: '#fbbf24' }}>±{spot.toFixed(2)}%</span>
+                              {fut > 0 && (
+                                <span style={{ fontSize: 10, color: spot > fut ? '#ef4444' : '#22c55e', marginLeft: 6 }}>
+                                  {spot > fut ? '▲' : '▼'}{Math.abs(spot - fut).toFixed(2)}%
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+
+                      {/* TP reachability bars — based on futures daily */}
+                      <div style={{ fontSize: 11, color: '#475569', marginBottom: 8, fontWeight: 600, marginTop: 14 }}>TP REACHABILITY vs AVG DAILY (FUTURES)</div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {/* Daily range reference line */}
-                        <div style={{ position: 'relative', height: 6, background: '#1e1e2e', borderRadius: 4 }}>
-                          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${(m.daily / maxBar) * 100}%`, background: '#475569', borderRadius: 4 }} />
-                          <span style={{ position: 'absolute', right: `${100 - (m.daily / maxBar) * 100}%`, top: -14, fontSize: 10, color: '#64748b', whiteSpace: 'nowrap', transform: 'translateX(50%)' }}>
+                        <div style={{ position: 'relative', height: 5, background: '#1e1e2e', borderRadius: 3, marginBottom: 14 }}>
+                          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${(m.daily / maxBar) * 100}%`, background: '#47556966', borderRadius: 3 }} />
+                          <span style={{ position: 'absolute', left: `${(m.daily / maxBar) * 100}%`, top: -14, fontSize: 10, color: '#64748b', transform: 'translateX(-50%)', whiteSpace: 'nowrap' }}>
                             avg day {m.daily.toFixed(2)}%
                           </span>
                         </div>
-
                         {tpPcts.map(({ label, pct }) => {
                           const ratio = m.daily > 0 ? pct / m.daily : 0;
                           const barColor = ratio <= 1 ? '#22c55e' : ratio <= 1.5 ? '#eab308' : '#f97316';
@@ -1327,12 +1342,11 @@ export default function Home() {
                           return (
                             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <span style={{ width: 28, fontSize: 11, color: '#22c55e', fontWeight: 700, flexShrink: 0 }}>{label}</span>
-                              <div style={{ flex: 1, position: 'relative', height: 20, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
-                                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${barW}%`, background: barColor + '55', borderRadius: 4, transition: 'width 0.3s' }} />
-                                {/* Daily avg marker */}
+                              <div style={{ flex: 1, position: 'relative', height: 22, background: '#0a0a0f', borderRadius: 4, overflow: 'hidden' }}>
+                                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${barW}%`, background: barColor + '55', borderRadius: 4 }} />
                                 <div style={{ position: 'absolute', left: `${(m.daily / maxBar) * 100}%`, top: 0, bottom: 0, width: 1, background: '#47556988' }} />
                                 <span style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', fontSize: 10, color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                                  {pct.toFixed(2)}% · {ratio.toFixed(2)}× daily · {tpLabel(ratio)}
+                                  {pct.toFixed(2)}% · {ratio.toFixed(2)}× · {tpLabel(ratio)}
                                 </span>
                               </div>
                             </div>

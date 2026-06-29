@@ -58,12 +58,8 @@ const IV: Record<string, string> = {
   '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D',
 };
 
-export async function fetchKlines(symbol: string, interval: string, limit = 200): Promise<RawCandle[]> {
-  const iv = IV[interval] ?? '60';
-  const url = `${BYBIT_PUBLIC}/v5/market/kline?category=linear&symbol=${symbol}&interval=${iv}&limit=${limit}`;
-  const json = await bybitFetch(url) as { retCode: number; result: { list: string[][] } };
-  if (json.retCode !== 0) throw new Error(`Bybit kline error for ${symbol}`);
-  // Bybit returns newest first — reverse to chronological
+async function parseKlines(json: { retCode: number; result: { list: string[][] } }, label: string): Promise<RawCandle[]> {
+  if (json.retCode !== 0) throw new Error(`Bybit kline error for ${label}`);
   return (json.result?.list ?? [])
     .reverse()
     .map(([t, o, h, l, c, v]) => ({
@@ -74,6 +70,20 @@ export async function fetchKlines(symbol: string, interval: string, limit = 200)
       close:  parseFloat(c),
       volume: parseFloat(v),
     }));
+}
+
+export async function fetchKlines(symbol: string, interval: string, limit = 200): Promise<RawCandle[]> {
+  const iv = IV[interval] ?? '60';
+  const url = `${BYBIT_PUBLIC}/v5/market/kline?category=linear&symbol=${symbol}&interval=${iv}&limit=${limit}`;
+  const json = await bybitFetch(url) as { retCode: number; result: { list: string[][] } };
+  return parseKlines(json, symbol);
+}
+
+export async function fetchSpotKlines(symbol: string, interval: string, limit = 200): Promise<RawCandle[]> {
+  const iv = IV[interval] ?? '60';
+  const url = `${BYBIT_PUBLIC}/v5/market/kline?category=spot&symbol=${symbol}&interval=${iv}&limit=${limit}`;
+  const json = await bybitFetch(url) as { retCode: number; result: { list: string[][] } };
+  return parseKlines(json, `${symbol} spot`);
 }
 
 export async function fetchTicker(symbol: string): Promise<{ price: number; change24h: number; volume24h: number }> {
