@@ -1725,6 +1725,16 @@ export default function Home() {
                     : null;
                   const pnlColor = unrealizedDollar === null ? '#475569' : unrealizedDollar >= 0 ? '#22c55e' : '#ef4444';
 
+                  // Breakeven price: entry ± round-trip fees (taker in 0.055% + maker out 0.020%)
+                  const FEE_BE = 0.00075;
+                  const bePrice = t.direction === 'LONG'
+                    ? t.entry * (1 + FEE_BE)
+                    : t.entry * (1 - FEE_BE);
+                  const beDistFromCurrent = currentPrice !== null
+                    ? (currentPrice - bePrice) / bePrice * (t.direction === 'LONG' ? 1 : -1)
+                    : null;
+                  const inProfitZone = beDistFromCurrent !== null && beDistFromCurrent > 0;
+
                   // Price bar: position from SL to TP3
                   const barMin = t.direction === 'LONG' ? t.stopLoss : t.tp3;
                   const barMax = t.direction === 'LONG' ? t.tp3 : t.stopLoss;
@@ -1733,6 +1743,7 @@ export default function Home() {
                     : null;
                   // Level markers
                   const markerEntry = Math.min(100, Math.max(0, (t.entry - barMin) / (barMax - barMin) * 100));
+                  const markerBE    = Math.min(100, Math.max(0, (bePrice  - barMin) / (barMax - barMin) * 100));
                   const markerTp1   = Math.min(100, Math.max(0, (t.tp1   - barMin) / (barMax - barMin) * 100));
                   const markerTp2   = Math.min(100, Math.max(0, (t.tp2   - barMin) / (barMax - barMin) * 100));
 
@@ -1769,35 +1780,50 @@ export default function Home() {
                       {/* Live price + unrealized P&L (open trades only) */}
                       {isOpen && (
                         <div style={{ marginBottom: 12 }}>
-                          {/* Big numbers row */}
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
-                            <div style={{ padding: '10px 12px', background: '#0a0a0f', borderRadius: 8 }}>
-                              <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>
-                                LIVE PRICE {secsAgo !== null && <span style={{ color: secsAgo < 15 ? '#22c55e' : '#475569' }}>{secsAgo}s ago</span>}
+                          {/* 2×2 stats grid */}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7, marginBottom: 10 }}>
+                            {/* Live price */}
+                            <div style={{ padding: '9px 10px', background: '#0a0a0f', borderRadius: 8 }}>
+                              <div style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>
+                                LIVE PRICE {secsAgo !== null && <span style={{ color: secsAgo < 15 ? '#22c55e' : '#475569' }}>{secsAgo}s</span>}
                               </div>
-                              <div style={{ fontSize: 16, fontWeight: 800, color: '#e2e8f0' }}>
+                              <div style={{ fontSize: 15, fontWeight: 800, color: '#e2e8f0' }}>
                                 {currentPrice !== null ? `$${currentPrice.toFixed(currentPrice < 1 ? 6 : currentPrice < 100 ? 4 : 2)}` : '—'}
                               </div>
                             </div>
-                            <div style={{ padding: '10px 12px', background: unrealizedDollar !== null ? `${pnlColor}11` : '#0a0a0f', borderRadius: 8, border: `1px solid ${unrealizedDollar !== null ? `${pnlColor}33` : 'transparent'}` }}>
-                              <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>UNREALIZED P&L</div>
-                              <div style={{ fontSize: 16, fontWeight: 800, color: pnlColor }}>
-                                {unrealizedDollar !== null
-                                  ? `${unrealizedDollar >= 0 ? '+' : ''}$${unrealizedDollar.toFixed(2)}`
-                                  : '—'}
+                            {/* Unrealized P&L */}
+                            <div style={{ padding: '9px 10px', background: unrealizedDollar !== null ? `${pnlColor}11` : '#0a0a0f', borderRadius: 8, border: `1px solid ${unrealizedDollar !== null ? `${pnlColor}33` : 'transparent'}` }}>
+                              <div style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>UNREALIZED P&L</div>
+                              <div style={{ fontSize: 15, fontWeight: 800, color: pnlColor }}>
+                                {unrealizedDollar !== null ? `${unrealizedDollar >= 0 ? '+' : ''}$${unrealizedDollar.toFixed(2)}` : '—'}
                               </div>
                               {unrealizedPct !== null && (
-                                <div style={{ fontSize: 10, color: pnlColor, opacity: 0.7 }}>
+                                <div style={{ fontSize: 9, color: pnlColor, opacity: 0.8 }}>
                                   {unrealizedPct >= 0 ? '+' : ''}{unrealizedPct.toFixed(2)}%
                                 </div>
                               )}
                             </div>
-                            <div style={{ padding: '10px 12px', background: '#0a0a0f', borderRadius: 8 }}>
-                              <div style={{ fontSize: 10, color: '#475569', marginBottom: 2 }}>R MULTIPLE</div>
-                              <div style={{ fontSize: 16, fontWeight: 800, color: unrealizedR !== null ? (unrealizedR >= 0 ? '#22c55e' : '#ef4444') : '#475569' }}>
+                            {/* R Multiple */}
+                            <div style={{ padding: '9px 10px', background: '#0a0a0f', borderRadius: 8 }}>
+                              <div style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>R MULTIPLE</div>
+                              <div style={{ fontSize: 15, fontWeight: 800, color: unrealizedR !== null ? (unrealizedR >= 0 ? '#22c55e' : '#ef4444') : '#475569' }}>
                                 {unrealizedR !== null ? `${unrealizedR >= 0 ? '+' : ''}${unrealizedR.toFixed(2)}R` : '—'}
                               </div>
-                              <div style={{ fontSize: 10, color: '#334155' }}>max {t.netRR.toFixed(1)}R</div>
+                              <div style={{ fontSize: 9, color: '#334155' }}>max {t.netRR.toFixed(1)}R</div>
+                            </div>
+                            {/* Breakeven */}
+                            <div style={{ padding: '9px 10px', background: inProfitZone ? '#22c55e11' : '#0a0a0f', borderRadius: 8, border: `1px solid ${inProfitZone ? '#22c55e33' : '#1e1e2e'}` }}>
+                              <div style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>BREAKEVEN</div>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: inProfitZone ? '#22c55e' : '#94a3b8' }}>
+                                ${bePrice.toFixed(bePrice < 1 ? 6 : bePrice < 100 ? 4 : 2)}
+                              </div>
+                              <div style={{ fontSize: 9, marginTop: 2 }}>
+                                {beDistFromCurrent !== null
+                                  ? inProfitZone
+                                    ? <span style={{ color: '#22c55e' }}>✓ {(beDistFromCurrent * 100).toFixed(3)}% past BE</span>
+                                    : <span style={{ color: '#eab308' }}>{(Math.abs(beDistFromCurrent) * 100).toFixed(3)}% to BE</span>
+                                  : <span style={{ color: '#334155' }}>fees: 0.075%</span>}
+                              </div>
                             </div>
                           </div>
 
@@ -1807,6 +1833,7 @@ export default function Home() {
                             <div style={{ position: 'relative', height: 18, marginBottom: 3 }}>
                               <span style={{ position: 'absolute', left: 0, fontSize: 10, color: '#ef4444', fontWeight: 700 }}>SL</span>
                               <span style={{ position: 'absolute', left: `${markerEntry}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>ENTRY</span>
+                              <span style={{ position: 'absolute', left: `${markerBE}%`, transform: 'translateX(-50%)', fontSize: 9, color: inProfitZone ? '#22c55e' : '#eab308', fontWeight: 700 }}>BE</span>
                               <span style={{ position: 'absolute', left: `${markerTp1}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#4ade80', fontWeight: 700 }}>TP1</span>
                               <span style={{ position: 'absolute', left: `${markerTp2}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#22c55e', fontWeight: 700 }}>TP2</span>
                               <span style={{ position: 'absolute', right: 0, fontSize: 10, color: '#16a34a', fontWeight: 700 }}>TP3</span>
@@ -1836,6 +1863,8 @@ export default function Home() {
                               <div style={{ position: 'absolute', left: t.direction === 'LONG' ? 0 : undefined, right: t.direction === 'SHORT' ? 0 : undefined, top: 0, bottom: 0, width: 4, background: '#ef4444', borderRadius: '4px 0 0 4px' }} />
                               {/* Entry line */}
                               <div style={{ position: 'absolute', left: `${markerEntry}%`, top: 0, bottom: 0, width: 2, background: '#94a3b8cc' }} />
+                              {/* BE line */}
+                              <div style={{ position: 'absolute', left: `${markerBE}%`, top: 0, bottom: 0, width: 1.5, background: inProfitZone ? '#22c55eaa' : '#eab308aa', borderStyle: 'dashed' }} />
                               {/* TP1 line */}
                               <div style={{ position: 'absolute', left: `${markerTp1}%`, top: 0, bottom: 0, width: 2, background: '#4ade80aa' }} />
                               {/* TP2 line */}
