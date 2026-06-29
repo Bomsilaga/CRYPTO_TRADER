@@ -197,6 +197,7 @@ export interface EngineResult {
   swingSignal: StyleSignal;
   deep: DeepAnalysis;
   candles: RawCandle[];
+  avgMoves: { daily: number; h8: number; h4: number };
 }
 
 function buildVerdict(
@@ -266,6 +267,25 @@ function buildVerdict(
   ].join('\n');
 }
 
+function avgRangePct(candles: RawCandle[], n: number): number {
+  const recent = candles.slice(-n);
+  if (!recent.length) return 0;
+  const sum = recent.reduce((acc, c) => acc + (c.high - c.low) / c.close, 0);
+  return (sum / recent.length) * 100;
+}
+
+function avg8hFromH4(h4: RawCandle[], n = 20): number {
+  const recent = h4.slice(-(n * 2));
+  if (recent.length < 2) return 0;
+  const pairs: number[] = [];
+  for (let i = 0; i + 1 < recent.length; i += 2) {
+    const hi = Math.max(recent[i].high, recent[i + 1].high);
+    const lo = Math.min(recent[i].low, recent[i + 1].low);
+    pairs.push((hi - lo) / recent[i + 1].close);
+  }
+  return pairs.length ? (pairs.reduce((a, b) => a + b, 0) / pairs.length) * 100 : 0;
+}
+
 export function runEngine(
   symbol: string,
   price: number,
@@ -294,6 +314,13 @@ export function runEngine(
 
   const h1  = candleMap['1h']  ?? candleMap['15m'] ?? [];
   const h4  = candleMap['4h']  ?? [];
+  const d1  = candleMap['1d']  ?? [];
+
+  const avgMoves = {
+    daily: avgRangePct(d1, 20),
+    h8:    avg8hFromH4(h4, 20),
+    h4:    avgRangePct(h4, 30),
+  };
   const closes1h = h1.map((c) => c.close);
   const rsiVal   = rsi(closes1h);
   const macdVal  = macd(closes1h);
@@ -438,5 +465,6 @@ export function runEngine(
     swingSignal,
     deep,
     candles: h1.slice(-100),
+    avgMoves,
   };
 }
