@@ -94,6 +94,33 @@ interface TradeResult {
   };
 }
 
+interface MarketTicker {
+  symbol:    string;
+  price:     number;
+  change24h: number;
+  volume24h: number;
+}
+
+interface RadarSignal {
+  symbol:    string;
+  price:     number;
+  change24h: number;
+  volume24h: number;
+  direction: 'LONG' | 'SHORT';
+  signals:   string[];
+  reason:    string;
+  score:     number;
+}
+
+interface RadarResult {
+  ok:      boolean;
+  count:   number;
+  scanned: number;
+  elapsed: number;
+  signals: RadarSignal[];
+  error?:  string;
+}
+
 interface HourlyCandle {
   hour: string;   // ISO hour bucket e.g. "2026-06-30T10:00:00Z"
   open: number;
@@ -428,7 +455,7 @@ function ScoreBar({ score }: { score: number }) {
 
 /* ─── Main component ─────────────────────────────────────────────────────── */
 
-type Tab = 'scan' | 'calc' | 'trades' | 'log' | 'settings';
+type Tab = 'scan' | 'radar' | 'calc' | 'trades' | 'log' | 'settings';
 type Theme = 'dark' | 'light';
 
 export default function Home() {
@@ -492,6 +519,16 @@ export default function Home() {
   const [syncKey, setSyncKey] = useState('');
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'ok' | 'error'>('idle');
   const [pendingSync, setPendingSync] = useState<Set<string>>(new Set());
+
+  // All-markets browser (for search autocomplete)
+  const [allMarkets, setAllMarkets] = useState<MarketTicker[]>([]);
+  const [marketsLoaded, setMarketsLoaded] = useState(false);
+  const [symbolSearch, setSymbolSearch] = useState('');
+
+  // Radar scanner
+  const [radarResult, setRadarResult] = useState<RadarResult | null>(null);
+  const [radarLoading, setRadarLoading] = useState(false);
+  const [radarFilter, setRadarFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
 
   // BTC comparison
   const [btcResult, setBtcResult] = useState<ScanResult | null>(null);
@@ -734,6 +771,31 @@ export default function Home() {
         setSyncStatus('ok');
       }
     } catch { setSyncStatus('error'); }
+  }
+
+  // Load all markets once for the all-coins search
+  useEffect(() => {
+    if (marketsLoaded) return;
+    fetch('/api/markets')
+      .then(r => r.json())
+      .then((d: { ok: boolean; markets?: MarketTicker[] }) => {
+        if (d.ok && d.markets) { setAllMarkets(d.markets); setMarketsLoaded(true); }
+      })
+      .catch(() => { /* ignore */ });
+  }, [marketsLoaded]);
+
+  async function runRadar() {
+    setRadarLoading(true);
+    setRadarResult(null);
+    try {
+      const res = await fetch('/api/radar');
+      const data = await res.json() as RadarResult;
+      setRadarResult(data);
+    } catch (e) {
+      setRadarResult({ ok: false, count: 0, scanned: 0, elapsed: 0, signals: [], error: String(e) });
+    } finally {
+      setRadarLoading(false);
+    }
   }
 
   // Poll for latest autoscan result every 60s
@@ -1064,14 +1126,15 @@ export default function Home() {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--c-border)', marginBottom: 0 }}>
-          <button style={TAB_STYLE(tab === 'scan')} onClick={() => setTab('scan')}>📡 Scanner</button>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--c-border)', marginBottom: 0, overflowX: 'auto' }}>
+          <button style={TAB_STYLE(tab === 'scan')} onClick={() => setTab('scan')}>📡 Scan</button>
+          <button style={TAB_STYLE(tab === 'radar')} onClick={() => setTab('radar')}>🔭 Radar</button>
           <button style={TAB_STYLE(tab === 'calc')} onClick={() => setTab('calc')}>📐 Calc</button>
           <button style={TAB_STYLE(tab === 'trades')} onClick={() => setTab('trades')}>
-            📒 Trades{trades.some(t => t.status === 'open') ? ` (${trades.filter(t => t.status === 'open').length})` : ''}
+            📒{trades.some(t => t.status === 'open') ? ` (${trades.filter(t => t.status === 'open').length})` : ' Trades'}
           </button>
           <button style={TAB_STYLE(tab === 'log')} onClick={() => setTab('log')}>
-            📋 Log{trades.length > 0 ? ` (${trades.length})` : ''}
+            📋{trades.length > 0 ? ` (${trades.length})` : ' Log'}
           </button>
           <button style={TAB_STYLE(tab === 'settings')} onClick={() => setTab('settings')}>⚙️</button>
         </div>
@@ -1083,25 +1146,68 @@ export default function Home() {
         {tab === 'scan' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-            {/* Search row */}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                value={symbol}
-                onChange={e => setSymbol(e.target.value.toUpperCase())}
-                onKeyDown={e => e.key === 'Enter' && scan()}
-                placeholder="e.g. AIGENS or AIGENSYNUSDT"
-                style={{
-                  flex: 1, padding: '11px 14px', background: 'var(--c-card)',
-                  border: '1px solid var(--c-border)', borderRadius: 8, color: 'var(--c-text)', outline: 'none', fontSize: 14,
-                }}
-              />
-              <button onClick={() => scan()} disabled={loading} style={{
-                padding: '11px 22px', background: loading ? '#3730a3' : '#6366f1', color: '#fff',
-                border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer',
-                fontWeight: 700, fontSize: 14, minWidth: 90,
-              }}>
-                {loading ? '…' : 'Scan'}
-              </button>
+            {/* Search row with all-markets autocomplete */}
+            <div style={{ position: 'relative' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={symbolSearch || symbol}
+                  onChange={e => {
+                    const v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+                    setSymbolSearch(v);
+                    setSymbol(v);
+                  }}
+                  onKeyDown={e => { if (e.key === 'Enter') { setSymbolSearch(''); scan(); } if (e.key === 'Escape') setSymbolSearch(''); }}
+                  onBlur={() => setTimeout(() => setSymbolSearch(''), 180)}
+                  placeholder="Search any pair — e.g. AIGENSYN, SOL, ETH…"
+                  style={{
+                    flex: 1, padding: '11px 14px', background: 'var(--c-card)',
+                    border: '1px solid var(--c-border)', borderRadius: 8, color: 'var(--c-text)', outline: 'none', fontSize: 14,
+                  }}
+                />
+                <button onClick={() => { setSymbolSearch(''); scan(); }} disabled={loading} style={{
+                  padding: '11px 22px', background: loading ? '#3730a3' : '#6366f1', color: '#fff',
+                  border: 'none', borderRadius: 8, cursor: loading ? 'not-allowed' : 'pointer',
+                  fontWeight: 700, fontSize: 14, minWidth: 90,
+                }}>
+                  {loading ? '…' : 'Scan'}
+                </button>
+              </div>
+              {/* Autocomplete dropdown */}
+              {symbolSearch.length >= 2 && (() => {
+                const q = symbolSearch;
+                const matches = allMarkets
+                  .filter(m => m.symbol.includes(q) || m.symbol.replace('USDT','').startsWith(q))
+                  .slice(0, 8);
+                if (!matches.length) return null;
+                return (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                    background: 'var(--c-card)', border: '1px solid var(--c-border)',
+                    borderRadius: 8, marginTop: 4, overflow: 'hidden', boxShadow: '0 8px 24px #00000044',
+                  }}>
+                    {matches.map(m => {
+                      const chg = m.change24h;
+                      const vol = m.volume24h >= 1e9 ? `$${(m.volume24h/1e9).toFixed(1)}B` : m.volume24h >= 1e6 ? `$${(m.volume24h/1e6).toFixed(0)}M` : `$${(m.volume24h/1e3).toFixed(0)}K`;
+                      return (
+                        <button key={m.symbol} onMouseDown={() => { setSymbol(m.symbol); setSymbolSearch(''); scan(m.symbol); }} style={{
+                          width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer',
+                          borderBottom: '1px solid var(--c-border)', color: 'var(--c-text)', textAlign: 'left',
+                        }}>
+                          <span style={{ fontWeight: 700, fontSize: 13 }}>{m.symbol}</span>
+                          <span style={{ fontSize: 12, display: 'flex', gap: 10 }}>
+                            <span style={{ color: chg >= 0 ? '#22c55e' : '#ef4444' }}>{chg >= 0 ? '+' : ''}{chg.toFixed(2)}%</span>
+                            <span style={{ color: 'var(--c-faint)' }}>{vol}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                    <div style={{ padding: '6px 14px', fontSize: 11, color: 'var(--c-faintest)' }}>
+                      {allMarkets.filter(m => m.symbol.includes(q) || m.symbol.replace('USDT','').startsWith(q)).length} matches across all Bybit perpetuals
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Market overview: grouped, collapsible, sortable */}
@@ -1903,6 +2009,175 @@ export default function Home() {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {/* ══════════════════ RADAR TAB ══════════════════ */}
+        {tab === 'radar' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+            {/* Header + scan button */}
+            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--c-text)' }}>🔭 Pre-Pump Radar</div>
+                  <div style={{ fontSize: 12, color: 'var(--c-dim)', marginTop: 3 }}>
+                    Scans ALL Bybit perpetuals for liquidity sweeps, CHoCH, BOS &amp; volume spikes
+                  </div>
+                </div>
+                <button
+                  onClick={runRadar}
+                  disabled={radarLoading}
+                  style={{
+                    padding: '10px 20px', background: radarLoading ? '#3730a3' : '#6366f1', color: '#fff',
+                    border: 'none', borderRadius: 8, cursor: radarLoading ? 'not-allowed' : 'pointer',
+                    fontWeight: 700, fontSize: 13,
+                  }}
+                >
+                  {radarLoading ? '⟳ Scanning…' : '▶ Run Scan'}
+                </button>
+              </div>
+              {radarResult && (
+                <div style={{ fontSize: 11, color: 'var(--c-faintest)' }}>
+                  Scanned {radarResult.scanned} pairs · Found {radarResult.count} signals · {(radarResult.elapsed / 1000).toFixed(1)}s
+                </div>
+              )}
+            </div>
+
+            {/* How to use */}
+            {!radarResult && !radarLoading && (
+              <div style={{ padding: 20, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)', marginBottom: 10 }}>What Radar detects</div>
+                {[
+                  ['💧 SWEEP', 'Liquidity grab — price took out a swing high/low then reversed. Classic pump setup.'],
+                  ['🔄 CHOCH', 'Change of Character — trend shifted. First signal of a potential reversal.'],
+                  ['🔨 BOS', 'Break of Structure — new swing high/low confirmed. Trend continuation signal.'],
+                  ['⚡ VOL_SPIKE', 'Volume > 1.8× average — unusual interest, often precedes a big move.'],
+                  ['📈 RSI_BOUNCE', 'RSI recovering from oversold zone — exhaustion of sellers.'],
+                  ['🔀 BB_SQUEEZE', 'Bollinger Bands tight — compressed volatility about to expand.'],
+                ].map(([tag, desc]) => (
+                  <div key={tag} style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--c-border)', alignItems: 'flex-start' }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#818cf8', minWidth: 110, paddingTop: 1 }}>{tag}</span>
+                    <span style={{ fontSize: 12, color: 'var(--c-dim)', lineHeight: 1.5 }}>{desc}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {radarLoading && (
+              <div style={{ padding: 40, textAlign: 'center', color: 'var(--c-faint)', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                <div style={{ fontSize: 32, marginBottom: 10 }}>🔭</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Scanning all Bybit perpetuals…</div>
+                <div style={{ fontSize: 12, color: 'var(--c-faintest)', marginTop: 6 }}>Fetching 4h + 1h klines · detecting ICT structures</div>
+              </div>
+            )}
+
+            {radarResult?.error && (
+              <div style={{ padding: 16, background: '#ef444411', border: '1px solid #ef444433', borderRadius: 10, color: '#ef4444', fontSize: 13 }}>
+                ✗ {radarResult.error}
+              </div>
+            )}
+
+            {radarResult && radarResult.signals.length > 0 && (
+              <>
+                {/* Filter bar */}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {(['ALL', 'LONG', 'SHORT'] as const).map(f => (
+                    <button key={f} onClick={() => setRadarFilter(f)} style={{
+                      padding: '6px 16px', borderRadius: 6, border: '1px solid var(--c-border)', cursor: 'pointer',
+                      background: radarFilter === f ? '#6366f122' : 'var(--c-card)',
+                      color: radarFilter === f ? '#818cf8' : 'var(--c-faint)',
+                      fontWeight: radarFilter === f ? 700 : 400, fontSize: 12,
+                    }}>
+                      {f === 'ALL' ? `All (${radarResult.signals.length})` : f === 'LONG' ? `🟢 Long (${radarResult.signals.filter(s => s.direction === 'LONG').length})` : `🔴 Short (${radarResult.signals.filter(s => s.direction === 'SHORT').length})`}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Signal cards */}
+                {radarResult.signals
+                  .filter(s => radarFilter === 'ALL' || s.direction === radarFilter)
+                  .map(sig => {
+                    const isLong = sig.direction === 'LONG';
+                    const dirColor = isLong ? '#22c55e' : '#ef4444';
+                    const vol = sig.volume24h >= 1e9 ? `$${(sig.volume24h/1e9).toFixed(2)}B` : sig.volume24h >= 1e6 ? `$${(sig.volume24h/1e6).toFixed(0)}M` : `$${(sig.volume24h/1e3).toFixed(0)}K`;
+                    const SIGNAL_META: Record<string, { emoji: string; label: string; color: string }> = {
+                      SWEEP:      { emoji: '💧', label: 'Sweep',      color: '#818cf8' },
+                      CHOCH:      { emoji: '🔄', label: 'CHoCH',      color: '#a78bfa' },
+                      BOS:        { emoji: '🔨', label: 'BOS',        color: '#6366f1' },
+                      VOL_SPIKE:  { emoji: '⚡', label: 'Vol Spike',  color: '#eab308' },
+                      RSI_BOUNCE: { emoji: '📈', label: 'RSI Bounce', color: '#22c55e' },
+                      RSI_TOP:    { emoji: '📉', label: 'RSI Top',    color: '#ef4444' },
+                      BB_SQUEEZE: { emoji: '🔀', label: 'BB Squeeze', color: '#f59e0b' },
+                      MOMENTUM:   { emoji: '🚀', label: 'Momentum',   color: '#06b6d4' },
+                    };
+                    return (
+                      <div key={sig.symbol} style={{ padding: 14, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                        {/* Top row */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontWeight: 800, fontSize: 16, color: 'var(--c-text)' }}>{sig.symbol}</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 4, background: `${dirColor}22`, color: dirColor }}>
+                              {isLong ? '▲ LONG' : '▼ SHORT'}
+                            </span>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: sig.score >= 70 ? '#22c55e' : sig.score >= 50 ? '#eab308' : 'var(--c-dim)' }}>
+                              {sig.score}/100
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <span style={{ fontSize: 12, color: sig.change24h >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>
+                              {sig.change24h >= 0 ? '+' : ''}{sig.change24h.toFixed(2)}%
+                            </span>
+                            <button
+                              onClick={() => { setSymbol(sig.symbol); scan(sig.symbol); setTab('scan'); }}
+                              style={{ padding: '5px 12px', background: '#6366f122', border: '1px solid #6366f144', borderRadius: 6, color: '#818cf8', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}
+                            >
+                              Deep Scan →
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Signal tags */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                          {sig.signals.map(s => {
+                            const m = SIGNAL_META[s] ?? { emoji: '•', label: s, color: 'var(--c-muted)' };
+                            return (
+                              <span key={s} style={{
+                                padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
+                                background: `${m.color}22`, color: m.color, border: `1px solid ${m.color}44`,
+                              }}>
+                                {m.emoji} {m.label}
+                              </span>
+                            );
+                          })}
+                        </div>
+
+                        {/* Reason */}
+                        <div style={{ fontSize: 12, color: 'var(--c-dim)', lineHeight: 1.5 }}>{sig.reason}</div>
+
+                        {/* Price + volume */}
+                        <div style={{ display: 'flex', gap: 16, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--c-border)' }}>
+                          <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>
+                            Price: <span style={{ color: 'var(--c-text)', fontWeight: 600 }}>${sig.price.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>
+                          </span>
+                          <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>
+                            Vol 24h: <span style={{ color: 'var(--c-text)', fontWeight: 600 }}>{vol}</span>
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </>
+            )}
+
+            {radarResult && radarResult.signals.length === 0 && !radarResult.error && (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--c-faint)', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>🔭</div>
+                <div>No strong pre-pump signals found right now</div>
+                <div style={{ fontSize: 12, color: 'var(--c-faintest)', marginTop: 4 }}>Try again later — market conditions change fast</div>
+              </div>
+            )}
+
           </div>
         )}
 
