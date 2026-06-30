@@ -750,6 +750,16 @@ export default function Home() {
     return () => clearInterval(id);
   }, []);
 
+  function normalizeSymbol(s: string): string {
+    const up = s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!up) return 'BTCUSDT';
+    // Already has a known quote currency suffix
+    if (/^(\d+)/.test(up)) return up;  // multiplier pairs like 1000PEPEUSDT
+    const quotes = ['USDT','USDC','BTC','ETH','BNB','SOL','BUSD'];
+    if (quotes.some(q => up.endsWith(q))) return up;
+    return up + 'USDT';
+  }
+
   async function scan(sym = symbol) {
     setLoading(true);
     setResult(null);
@@ -759,7 +769,10 @@ export default function Home() {
     setAiWarnings([]);
     setTab('scan');
     try {
-      const upperSym = sym.toUpperCase();
+      const upperSym = normalizeSymbol(sym);
+      if (upperSym !== sym.toUpperCase().replace(/[^A-Z0-9]/g, '')) {
+        setSymbol(upperSym);
+      }
       const isBtc = upperSym === 'BTCUSDT';
       const [res, btcRes] = await Promise.all([
         fetch(`/api/scan?symbol=${upperSym}`),
@@ -1076,7 +1089,7 @@ export default function Home() {
                 value={symbol}
                 onChange={e => setSymbol(e.target.value.toUpperCase())}
                 onKeyDown={e => e.key === 'Enter' && scan()}
-                placeholder="e.g. ETHUSDT"
+                placeholder="e.g. AIGENS or AIGENSYNUSDT"
                 style={{
                   flex: 1, padding: '11px 14px', background: 'var(--c-card)',
                   border: '1px solid var(--c-border)', borderRadius: 8, color: 'var(--c-text)', outline: 'none', fontSize: 14,

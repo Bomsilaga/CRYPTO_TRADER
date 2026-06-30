@@ -7,9 +7,18 @@ function toSpotSymbol(sym: string) {
   return sym.replace(/^\d+/, '');
 }
 
+function normalizeSymbol(raw: string): string {
+  const s = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!s) return 'BTCUSDT';
+  if (/^\d/.test(s)) return s; // multiplier pairs e.g. 1000PEPEUSDT
+  const quotes = ['USDT','USDC','BTC','ETH','BNB','SOL','BUSD'];
+  if (quotes.some(q => s.endsWith(q))) return s;
+  return s + 'USDT';
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const symbol = (searchParams.get('symbol') ?? 'ETHUSDT').toUpperCase();
+  const symbol = normalizeSymbol(searchParams.get('symbol') ?? 'ETHUSDT');
   const spotSym = toSpotSymbol(symbol);
 
   try {

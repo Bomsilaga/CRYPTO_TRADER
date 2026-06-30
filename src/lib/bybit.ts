@@ -58,8 +58,8 @@ const IV: Record<string, string> = {
   '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D',
 };
 
-async function parseKlines(json: { retCode: number; result: { list: string[][] } }, label: string): Promise<RawCandle[]> {
-  if (json.retCode !== 0) throw new Error(`Bybit kline error for ${label}`);
+async function parseKlines(json: { retCode: number; retMsg?: string; result: { list: string[][] } }, label: string): Promise<RawCandle[]> {
+  if (json.retCode !== 0) throw new Error(`Bybit kline error for ${label} (code ${json.retCode}: ${json.retMsg ?? 'unknown'})`);
   return (json.result?.list ?? [])
     .reverse()
     .map(([t, o, h, l, c, v]) => ({
@@ -89,9 +89,9 @@ export async function fetchSpotKlines(symbol: string, interval: string, limit = 
 export async function fetchTicker(symbol: string): Promise<{ price: number; change24h: number; volume24h: number }> {
   const url = `${BYBIT_PUBLIC}/v5/market/tickers?category=linear&symbol=${symbol}`;
   const json = await bybitFetch(url) as { retCode: number; result: { list: Record<string, string>[] } };
-  if (json.retCode !== 0) throw new Error(`Bybit ticker error for ${symbol}`);
+  if (json.retCode !== 0) throw new Error(`Bybit ticker error for ${symbol} — symbol may not exist as a Bybit perpetual`);
   const d = json.result?.list?.[0];
-  if (!d) throw new Error(`No ticker data for ${symbol}`);
+  if (!d) throw new Error(`${symbol} not found on Bybit — check the symbol name (e.g. AIGENSYNUSDT)`);
   return {
     price:     parseFloat(d.lastPrice),
     change24h: parseFloat(d.price24hPcnt) * 100,
