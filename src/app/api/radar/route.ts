@@ -2,7 +2,27 @@ import { NextResponse } from 'next/server';
 import { fetchAllTickers, fetchKlines } from '@/lib/bybit';
 import {
   detectBOS, detectChoCH, detectSweeps, volRatio as calcVolRatio, rsi as calcRsi, bollingerBands,
+  atr as calcAtr, swingHighLow,
+  type SweepEvent,
 } from '@/lib/indicators';
+import type { RawCandle } from '@/lib/bybit';
+
+export interface RadarSetup {
+  setupType:   string;                      // 'OTE_RETRACEMENT' | 'BOS_PULLBACK' | 'BREAKOUT' | 'CONTINUATION'
+  confidence:  'HIGH' | 'MEDIUM' | 'LOW';
+  entryLow:    number;                      // lower bound of entry zone
+  entryHigh:   number;                      // upper bound of entry zone
+  entryPrice:  number;                      // ideal limit order price (midpoint)
+  stopLoss:    number;
+  tp1:         number;
+  tp2:         number;
+  tp3:         number;
+  rrRatio:     number;                      // R:R to TP2
+  entryLogic:  string;                      // why this level
+  timing:      string;                      // what confirmation to wait for
+  atr4h:       number;                      // 4H ATR for reference
+  entryStatus: 'WAIT' | 'NOW' | 'MISSED';  // price vs entry zone
+}
 
 export interface RadarSignal {
   symbol:    string;
@@ -10,9 +30,177 @@ export interface RadarSignal {
   change24h: number;
   volume24h: number;
   direction: 'LONG' | 'SHORT';
-  signals:   string[];   // e.g. ['SWEEP', 'CHOCH', 'BOS', 'VOL_SPIKE', 'RSI_BOUNCE', 'BB_SQUEEZE']
-  reason:    string;     // human-readable summary
-  score:     number;     // 0-100 signal strength
+  signals:   string[];
+  reason:    string;
+  score:     number;
+  setup:     RadarSetup;
+}
+
+/* ── Mini signal engine ────────────────────────────────────────── */
+
+function f(v: number): number { return +v.toPrecision(6); }
+
+function buildSetup(
+  direction: 'LONG' | 'SHORT',
+  signals:   string[],
+  sweeps:    SweepEvent[],
+  h4:        RawCandle[],
+  currentPrice: number,
+): RadarSetup {
+  const atr4h   = calcAtr(h4.slice(-20));
+  const swings  = swingHighLow(h4, 25);
+  const prevSw  = swingHighLow(h4.slice(0, -10), 20);
+
+  const hasSweep   = signals.includes('SWEEP');
+  const hasChoCH   = signals.includes('CHOCH');
+  const hasBOS     = signals.includes('BOS');
+  const hasBBSq    = signals.includes('BB_SQUEEZE');
+
+  let entryLow: number, entryHigh: number, entryPrice: number;
+  let stopLoss: number;
+  let tp1: number, tp2: number, tp3: number;
+  let setupType: string;
+  let confidence: 'HIGH' | 'MEDIUM' | 'LOW';
+  let entryLogic: string, timing: string;
+
+  if (hasSweep && hasChoCH) {
+    // ── OTE Retracement (highest confidence — ICT sweep + CHoCH) ────
+    setupType  = 'OTE_RETRACEMENT';
+    confidence = 'HIGH';
+
+    const bestSweep = sweeps.find(s => s.direction === direction) ?? sweeps[0];
+    const sweptLevel = bestSweep?.sweptLevel ?? (direction === 'LONG' ? swings.low : swings.high);
+
+    if (direction === 'LONG') {
+      // SSL swept → price bounced up → wait for OTE pullback (61.8–78.6% retrace)
+      const range   = currentPrice - sweptLevel;
+      entryHigh     = f(currentPrice - range * 0.618);
+      entryLow      = f(currentPrice - range * 0.786);
+      entryPrice    = f(currentPrice - range * 0.705);  // OTE midpoint
+      stopLoss      = f(sweptLevel - atr4h * 0.3);
+      const slDist  = entryPrice - stopLoss;
+      tp1           = f(Math.min(swings.high, entryPrice + slDist * 1.5));
+      tp2           = f(entryPrice + slDist * 2.5);
+      tp3           = f(entryPrice + slDist * 4.0);
+      entryLogic    = `SSL swept @ $${f(sweptLevel)} + CHoCH bullish. Price must retrace 61.8–78.6% of the recovery move before the continuation up.`;
+      timing        = 'Limit buy inside OTE zone · Confirm with 15m bullish engulfing/pin bar · SL just below swept low';
+    } else {
+      // BSL swept → price dropped → wait for OTE rally (61.8–78.6% retrace up)
+      const range   = sweptLevel - currentPrice;
+      entryLow      = f(currentPrice + range * 0.618);
+      entryHigh     = f(currentPrice + range * 0.786);
+      entryPrice    = f(currentPrice + range * 0.705);
+      stopLoss      = f(sweptLevel + atr4h * 0.3);
+      const slDist  = stopLoss - entryPrice;
+      tp1           = f(Math.max(swings.low, entryPrice - slDist * 1.5));
+      tp2           = f(entryPrice - slDist * 2.5);
+      tp3           = f(entryPrice - slDist * 4.0);
+      entryLogic    = `BSL swept @ $${f(sweptLevel)} + CHoCH bearish. Price must retrace 61.8–78.6% of the drop before continuation down.`;
+      timing        = 'Limit sell inside OTE zone · Confirm with 15m bearish engulfing · SL just above swept high';
+    }
+
+  } else if (hasBOS) {
+    // ── BOS pullback to broken structure ─────────────────────────
+    setupType  = 'BOS_PULLBACK';
+    confidence = 'MEDIUM';
+
+    if (direction === 'LONG') {
+      const bosLevel = prevSw.high;  // broken above
+      const bosMove  = currentPrice - bosLevel;
+      entryLow      = f(bosLevel - atr4h * 0.1);         // slight below the boss level
+      entryHigh     = f(bosLevel + bosMove * 0.382);      // 38.2% into new range
+      entryPrice    = f(bosLevel + bosMove * 0.2);
+      stopLoss      = f(bosLevel - atr4h * 0.5);
+      const slDist  = entryPrice - stopLoss;
+      tp1           = f(Math.min(swings.high, entryPrice + slDist * 1.5));
+      tp2           = f(entryPrice + slDist * 2.5);
+      tp3           = f(entryPrice + slDist * 4.0);
+      entryLogic    = `BOS above $${f(bosLevel)} (prev swing high). Wait for price to pull back and retest that level as support before entering LONG.`;
+      timing        = 'Limit buy at BOS level retest · Look for 1H candle rejection from the zone';
+    } else {
+      const bosLevel = prevSw.low;   // broken below
+      const bosMove  = bosLevel - currentPrice;
+      entryHigh     = f(bosLevel + atr4h * 0.1);
+      entryLow      = f(bosLevel - bosMove * 0.382);
+      entryPrice    = f(bosLevel - bosMove * 0.2);
+      stopLoss      = f(bosLevel + atr4h * 0.5);
+      const slDist  = stopLoss - entryPrice;
+      tp1           = f(Math.max(swings.low, entryPrice - slDist * 1.5));
+      tp2           = f(entryPrice - slDist * 2.5);
+      tp3           = f(entryPrice - slDist * 4.0);
+      entryLogic    = `BOS below $${f(bosLevel)} (prev swing low). Wait for price to rally back and retest that level as resistance before entering SHORT.`;
+      timing        = 'Limit sell at BOS level retest · Look for 1H bearish rejection candle';
+    }
+
+  } else if (hasBBSq) {
+    // ── BB Squeeze breakout ───────────────────────────────────────
+    setupType  = 'BREAKOUT';
+    confidence = 'LOW';
+
+    const slDist  = atr4h * 1.2;
+    entryPrice    = f(currentPrice);
+    entryLow      = f(currentPrice * 0.999);
+    entryHigh     = f(currentPrice * 1.001);
+    stopLoss      = f(direction === 'LONG' ? currentPrice - slDist : currentPrice + slDist);
+    const risk    = Math.abs(entryPrice - stopLoss);
+    tp1           = f(direction === 'LONG' ? entryPrice + risk      : entryPrice - risk);
+    tp2           = f(direction === 'LONG' ? entryPrice + risk * 2  : entryPrice - risk * 2);
+    tp3           = f(direction === 'LONG' ? entryPrice + risk * 3  : entryPrice - risk * 3);
+    entryLogic    = 'BB squeeze with narrow bands — volatility expansion imminent. Enter on the breakout candle close.';
+    timing        = 'Wait for H4 candle to CLOSE decisively outside BB bands, then enter · SL 1.2 ATR on opposite side';
+
+  } else {
+    // ── Momentum / RSI continuation ──────────────────────────────
+    setupType  = 'CONTINUATION';
+    confidence = 'LOW';
+
+    const last  = h4[h4.length - 1];
+    const prev  = h4[h4.length - 2];
+    const slDist = atr4h * 1.2;
+
+    if (direction === 'LONG') {
+      const moveSize = last.close - prev.close;
+      entryPrice  = f(last.close - moveSize * 0.5);   // 50% pullback of last H4
+      entryLow    = f(last.close - moveSize * 0.618);
+      entryHigh   = f(last.close - moveSize * 0.382);
+      stopLoss    = f(Math.min(last.low, prev.low) - atr4h * 0.3);
+    } else {
+      const moveSize = prev.close - last.close;
+      entryPrice  = f(last.close + moveSize * 0.5);
+      entryHigh   = f(last.close + moveSize * 0.618);
+      entryLow    = f(last.close + moveSize * 0.382);
+      stopLoss    = f(Math.max(last.high, prev.high) + atr4h * 0.3);
+    }
+    const risk  = Math.abs(entryPrice - stopLoss);
+    tp1         = f(direction === 'LONG' ? entryPrice + risk      : entryPrice - risk);
+    tp2         = f(direction === 'LONG' ? entryPrice + risk * 2  : entryPrice - risk * 2);
+    tp3         = f(direction === 'LONG' ? entryPrice + risk * 3.5: entryPrice - risk * 3.5);
+    entryLogic  = `Momentum ${direction}. Wait for a 50% pullback of the last H4 candle before entering — don't chase.`;
+    timing      = 'Limit order at 50% retrace level · Reject if price blows through without slowing';
+  }
+
+  const risk    = Math.abs(entryPrice - stopLoss);
+  const reward2 = Math.abs(tp2 - entryPrice);
+  const rrRatio = risk > 0 ? +((reward2 / risk).toFixed(1)) : 0;
+
+  // Is price already in the entry zone, waiting to get there, or past it?
+  let entryStatus: 'WAIT' | 'NOW' | 'MISSED';
+  if (direction === 'LONG') {
+    if (currentPrice > entryHigh)                             entryStatus = 'WAIT';   // hasn't pulled back yet
+    else if (currentPrice >= entryLow && currentPrice <= entryHigh) entryStatus = 'NOW';  // in zone!
+    else                                                      entryStatus = 'MISSED'; // overshot below
+  } else {
+    if (currentPrice < entryLow)                              entryStatus = 'WAIT';   // hasn't rallied yet
+    else if (currentPrice >= entryLow && currentPrice <= entryHigh) entryStatus = 'NOW';
+    else                                                      entryStatus = 'MISSED';
+  }
+
+  return {
+    setupType, confidence, entryLow, entryHigh, entryPrice,
+    stopLoss, tp1, tp2, tp3, rrRatio, entryLogic, timing,
+    atr4h: +atr4h.toPrecision(4),
+    entryStatus,
+  };
 }
 
 const BATCH        = 5;
@@ -131,6 +319,8 @@ export async function GET() {
             if (signals.includes('RSI_TOP'))    parts.push(`RSI ${rsiVal.toFixed(0)} pulling back from overbought`);
             if (bbSqueeze)           parts.push('BB squeeze — volatility expansion incoming');
 
+            const setup = buildSetup(direction, signals, sweeps, h4, t.price);
+
             results.push({
               symbol:    t.symbol,
               price:     t.price,
@@ -140,6 +330,7 @@ export async function GET() {
               signals,
               reason: parts.join(' · '),
               score,
+              setup,
             });
           } catch { /* skip */ }
         })

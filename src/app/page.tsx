@@ -101,6 +101,23 @@ interface MarketTicker {
   volume24h: number;
 }
 
+interface RadarSetup {
+  setupType:   string;
+  confidence:  'HIGH' | 'MEDIUM' | 'LOW';
+  entryLow:    number;
+  entryHigh:   number;
+  entryPrice:  number;
+  stopLoss:    number;
+  tp1:         number;
+  tp2:         number;
+  tp3:         number;
+  rrRatio:     number;
+  entryLogic:  string;
+  timing:      string;
+  atr4h:       number;
+  entryStatus: 'WAIT' | 'NOW' | 'MISSED';
+}
+
 interface RadarSignal {
   symbol:    string;
   price:     number;
@@ -110,6 +127,7 @@ interface RadarSignal {
   signals:   string[];
   reason:    string;
   score:     number;
+  setup:     RadarSetup;
 }
 
 interface RadarResult {
@@ -533,6 +551,7 @@ export default function Home() {
   const [radarResult, setRadarResult] = useState<RadarResult | null>(null);
   const [radarLoading, setRadarLoading] = useState(false);
   const [radarFilter, setRadarFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
+  const [radarExpanded, setRadarExpanded] = useState<Set<string>>(new Set());
 
   // TP/SL toast notifications
   const [toasts, setToasts] = useState<{ id: string; msg: string; color: string }[]>([]);
@@ -2189,8 +2208,16 @@ export default function Home() {
                       BB_SQUEEZE: { emoji: '🔀', label: 'BB Squeeze', color: '#f59e0b' },
                       MOMENTUM:   { emoji: '🚀', label: 'Momentum',   color: '#06b6d4' },
                     };
+
+                    const sp = sig.setup;
+                    const confColor = sp.confidence === 'HIGH' ? '#22c55e' : sp.confidence === 'MEDIUM' ? '#eab308' : '#94a3b8';
+                    const statusColor = sp.entryStatus === 'NOW' ? '#22c55e' : sp.entryStatus === 'WAIT' ? '#eab308' : '#ef4444';
+                    const statusLabel = sp.entryStatus === 'NOW' ? 'IN ZONE — ENTER' : sp.entryStatus === 'WAIT' ? 'WAIT FOR PULLBACK' : 'ENTRY MISSED';
+                    const fmt = (v: number) => v < 0.01 ? v.toFixed(6) : v < 1 ? v.toFixed(5) : v < 100 ? v.toFixed(4) : v < 10000 ? v.toFixed(2) : v.toFixed(0);
+                    const isExpanded = radarExpanded.has(sig.symbol);
+
                     return (
-                      <div key={sig.symbol} style={{ padding: 14, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                      <div key={sig.symbol} style={{ padding: 14, background: 'var(--c-card)', border: `1px solid ${sp.entryStatus === 'NOW' ? dirColor + '66' : 'var(--c-border)'}`, borderRadius: 10, boxShadow: sp.entryStatus === 'NOW' ? `0 0 20px ${dirColor}18` : 'none' }}>
                         {/* Top row */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -2200,6 +2227,9 @@ export default function Home() {
                             </span>
                             <span style={{ fontSize: 11, fontWeight: 700, color: sig.score >= 70 ? '#22c55e' : sig.score >= 50 ? '#eab308' : 'var(--c-dim)' }}>
                               {sig.score}/100
+                            </span>
+                            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: `${statusColor}22`, color: statusColor, border: `1px solid ${statusColor}44` }}>
+                              {statusLabel}
                             </span>
                           </div>
                           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -2231,10 +2261,90 @@ export default function Home() {
                         </div>
 
                         {/* Reason */}
-                        <div style={{ fontSize: 12, color: 'var(--c-dim)', lineHeight: 1.5 }}>{sig.reason}</div>
+                        <div style={{ fontSize: 12, color: 'var(--c-dim)', lineHeight: 1.5, marginBottom: 10 }}>{sig.reason}</div>
+
+                        {/* ── Entry Plan toggle ────────────────────────────────── */}
+                        <button
+                          onClick={() => setRadarExpanded(prev => {
+                            const next = new Set(prev);
+                            next.has(sig.symbol) ? next.delete(sig.symbol) : next.add(sig.symbol);
+                            return next;
+                          })}
+                          style={{
+                            width: '100%', padding: '7px 12px', marginBottom: isExpanded ? 10 : 0,
+                            background: `${dirColor}11`, border: `1px solid ${dirColor}33`,
+                            borderRadius: 7, color: dirColor, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                          }}
+                        >
+                          <span>ENTRY PLAN · {sp.setupType.replace(/_/g, ' ')} · <span style={{ color: confColor }}>{sp.confidence} CONFIDENCE</span></span>
+                          <span style={{ fontSize: 13 }}>{isExpanded ? '▲' : '▼'}</span>
+                        </button>
+
+                        {isExpanded && (
+                          <div style={{ background: 'var(--c-inner)', borderRadius: 8, padding: '12px 12px 10px', border: `1px solid ${dirColor}22` }}>
+
+                            {/* Key levels grid */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 7, marginBottom: 10 }}>
+                              <div style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: `1px solid ${dirColor}33` }}>
+                                <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>ENTRY ZONE</div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: dirColor }}>${fmt(sp.entryLow)}</div>
+                                <div style={{ fontSize: 10, color: 'var(--c-faint)' }}>to ${fmt(sp.entryHigh)}</div>
+                                <div style={{ fontSize: 10, color: statusColor, fontWeight: 700, marginTop: 2 }}>{statusLabel}</div>
+                              </div>
+                              <div style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: '1px solid #ef444433' }}>
+                                <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>STOP LOSS</div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#ef4444' }}>${fmt(sp.stopLoss)}</div>
+                                <div style={{ fontSize: 10, color: 'var(--c-faint)' }}>
+                                  {((Math.abs(sp.entryPrice - sp.stopLoss) / sp.entryPrice) * 100).toFixed(2)}% from entry
+                                </div>
+                              </div>
+                              <div style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: '1px solid #6366f133' }}>
+                                <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>R:R RATIO</div>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: sp.rrRatio >= 2 ? '#22c55e' : '#eab308' }}>{sp.rrRatio}:1</div>
+                                <div style={{ fontSize: 10, color: 'var(--c-faint)' }}>to TP2</div>
+                              </div>
+                            </div>
+
+                            {/* TP levels */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 7, marginBottom: 10 }}>
+                              {[
+                                { label: 'TP1 · 50%', value: sp.tp1, color: '#4ade80',
+                                  pct: ((Math.abs(sp.tp1 - sp.entryPrice) / sp.entryPrice) * 100).toFixed(1) },
+                                { label: 'TP2 · 25%', value: sp.tp2, color: '#22c55e',
+                                  pct: ((Math.abs(sp.tp2 - sp.entryPrice) / sp.entryPrice) * 100).toFixed(1) },
+                                { label: 'TP3 · 25%', value: sp.tp3, color: '#16a34a',
+                                  pct: ((Math.abs(sp.tp3 - sp.entryPrice) / sp.entryPrice) * 100).toFixed(1) },
+                              ].map(({ label, value, color, pct }) => (
+                                <div key={label} style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: `1px solid ${color}33` }}>
+                                  <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>{label}</div>
+                                  <div style={{ fontSize: 12, fontWeight: 700, color }}>${fmt(value)}</div>
+                                  <div style={{ fontSize: 10, color: 'var(--c-faint)' }}>+{pct}%</div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Entry logic */}
+                            <div style={{ marginBottom: 8 }}>
+                              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.07em', marginBottom: 4 }}>ENTRY LOGIC</div>
+                              <div style={{ fontSize: 11, color: 'var(--c-text)', lineHeight: 1.55 }}>{sp.entryLogic}</div>
+                            </div>
+
+                            {/* Timing */}
+                            <div style={{ padding: '8px 10px', background: `${dirColor}0d`, borderRadius: 6, border: `1px solid ${dirColor}22` }}>
+                              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.07em', marginBottom: 3 }}>TIMING / TRIGGER</div>
+                              <div style={{ fontSize: 11, color: dirColor, lineHeight: 1.55, fontWeight: 500 }}>{sp.timing}</div>
+                            </div>
+
+                            {/* ATR reference */}
+                            <div style={{ marginTop: 8, fontSize: 10, color: 'var(--c-faintest)' }}>
+                              4H ATR: ${fmt(sp.atr4h)} · Ideal entry: ${fmt(sp.entryPrice)} · All levels from kline snapshot at scan time
+                            </div>
+                          </div>
+                        )}
 
                         {/* Price + volume */}
-                        <div style={{ display: 'flex', gap: 16, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--c-border)' }}>
+                        <div style={{ display: 'flex', gap: 16, marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--c-border)' }}>
                           <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>
                             Price: <span style={{ color: 'var(--c-text)', fontWeight: 600 }}>${sig.price.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>
                           </span>
