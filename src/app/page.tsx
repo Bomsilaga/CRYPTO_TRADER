@@ -165,10 +165,14 @@ interface TradeEntry {
   qty: number;
   positionNotional: number;
   marginUsed: number;
-  status: 'open' | 'tp1' | 'tp2' | 'tp3' | 'sl' | 'manual';
+  status: 'open' | 'tp3' | 'sl' | 'manual';
   exitPrice?: number;
   pnlDollars?: number;
   orderId?: string;
+  // TP milestone tracking — set automatically, trade stays open until TP3 or SL
+  tp1Hit?: boolean;
+  tp2Hit?: boolean;
+  tp3Hit?: boolean;
   // Extended for log + sync
   notes?: string;
   highestPrice?: number;
@@ -530,6 +534,14 @@ export default function Home() {
   const [radarLoading, setRadarLoading] = useState(false);
   const [radarFilter, setRadarFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
 
+  // TP/SL toast notifications
+  const [toasts, setToasts] = useState<{ id: string; msg: string; color: string }[]>([]);
+  function showToast(msg: string, color: string) {
+    const id = Math.random().toString(36).slice(2);
+    setToasts(prev => [...prev.slice(-4), { id, msg, color }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+  }
+
   // BTC comparison
   const [btcResult, setBtcResult] = useState<ScanResult | null>(null);
 
@@ -662,9 +674,13 @@ export default function Home() {
             return next;
           });
 
-          // Update H/L + hourly candles for open trades
+          // Update H/L + hourly candles + TP/SL detection for open trades
           const nowHour = new Date().toISOString().slice(0, 13) + ':00:00Z';
           const changedIds = new Set<string>();
+          const toastQueue: { msg: string; color: string }[] = [];
+          const patchQueue: { id: string; patch: Partial<TradeEntry> }[] = [];
+          const fmt4 = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
+
           setTrades(prev => prev.map(t => {
             if (t.status !== 'open') return t;
             const price = priceMap[t.symbol];
@@ -687,12 +703,54 @@ export default function Home() {
             }
             updated.hourlyCandles = candles;
             changedIds.add(t.id);
+
+            // ── Tiered TP / SL auto-detection ──────────────────────────
+            const isLong = t.direction === 'LONG';
+
+            // SL check first (takes priority over TP)
+            if ((isLong ? price <= t.stopLoss : price >= t.stopLoss)) {
+              const pnl = t.qty * (t.stopLoss - t.entry) * (isLong ? 1 : -1);
+              updated = { ...updated, status: 'sl', exitPrice: t.stopLoss, pnlDollars: pnl };
+              toastQueue.push({ msg: `STOPPED OUT — ${t.symbol} @ $${fmt4(t.stopLoss)} | ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, color: '#ef4444' });
+              patchQueue.push({ id: t.id, patch: { status: 'sl', exitPrice: t.stopLoss, pnlDollars: pnl, tp1Hit: updated.tp1Hit, tp2Hit: updated.tp2Hit } });
+              changedIds.add(t.id);
+              return updated;
+            }
+
+            // TP1
+            if (!updated.tp1Hit && (isLong ? price >= t.tp1 : price <= t.tp1)) {
+              updated.tp1Hit = true;
+              toastQueue.push({ msg: `TP1 HIT — ${t.symbol} @ $${fmt4(t.tp1)} | Move SL to breakeven`, color: '#22c55e' });
+              patchQueue.push({ id: t.id, patch: { tp1Hit: true } });
+              changedIds.add(t.id);
+            }
+
+            // TP2
+            if (updated.tp1Hit && !updated.tp2Hit && (isLong ? price >= t.tp2 : price <= t.tp2)) {
+              updated.tp2Hit = true;
+              toastQueue.push({ msg: `TP2 HIT — ${t.symbol} @ $${fmt4(t.tp2)} | Trail stop to TP1`, color: '#22c55e' });
+              patchQueue.push({ id: t.id, patch: { tp1Hit: true, tp2Hit: true } });
+              changedIds.add(t.id);
+            }
+
+            // TP3 — auto-close full position
+            if (updated.tp1Hit && updated.tp2Hit && !updated.tp3Hit && (isLong ? price >= t.tp3 : price <= t.tp3)) {
+              const pnl = t.qty * (t.tp3 - t.entry) * (isLong ? 1 : -1);
+              updated = { ...updated, tp3Hit: true, status: 'tp3', exitPrice: t.tp3, pnlDollars: pnl };
+              toastQueue.push({ msg: `FULL TARGET — ${t.symbol} TP3 @ $${fmt4(t.tp3)} | +$${pnl.toFixed(2)}`, color: '#16a34a' });
+              patchQueue.push({ id: t.id, patch: { status: 'tp3', exitPrice: t.tp3, pnlDollars: pnl, tp1Hit: true, tp2Hit: true, tp3Hit: true } });
+              changedIds.add(t.id);
+            }
+
             return updated;
           }));
 
           if (changedIds.size > 0) {
             setPendingSync(prev => new Set([...prev, ...changedIds]));
           }
+          // Fire side effects outside the state updater
+          toastQueue.forEach(({ msg, color }) => showToast(msg, color));
+          patchQueue.forEach(({ id, patch }) => patchTrade(id, patch));
         }
       } catch { /* ignore */ }
       setLiveRefreshing(false);
@@ -1088,6 +1146,26 @@ export default function Home() {
   return (
     <main data-theme={theme} style={{ maxWidth: 920, margin: '0 auto', padding: '0 0 40px', background: 'var(--c-bg)', minHeight: '100vh', ...cssVars } as React.CSSProperties}>
       <style>{`body { background: ${isDark ? '#080810' : '#f1f5f9'}; margin: 0; }`}</style>
+
+      {/* ── Toast notifications ────────────────────────────────────────── */}
+      {toasts.length > 0 && (
+        <div style={{ position: 'fixed', top: 16, right: 16, zIndex: 9999, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 340, pointerEvents: 'none' }}>
+          {toasts.map(toast => (
+            <div key={toast.id} style={{
+              padding: '10px 14px', borderRadius: 10, fontSize: 13, fontWeight: 700,
+              background: `${toast.color}22`, border: `1.5px solid ${toast.color}66`,
+              color: toast.color,
+              backdropFilter: 'blur(12px)',
+              boxShadow: `0 4px 24px ${toast.color}33`,
+              animation: 'slideIn 0.2s ease',
+              lineHeight: 1.4,
+            }}>
+              {toast.msg}
+            </div>
+          ))}
+        </div>
+      )}
+      <style>{`@keyframes slideIn { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: translateX(0); } }`}</style>
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div style={{ padding: '20px 16px 0', marginBottom: 0 }}>
@@ -2197,23 +2275,50 @@ export default function Home() {
               <>
                 {/* Summary row */}
                 {(() => {
-                  const closed = trades.filter(t => t.status !== 'open');
-                  const wins = closed.filter(t => ['tp1','tp2','tp3'].includes(t.status)).length;
-                  const totalPnl = trades.reduce((s, t) => s + (t.pnlDollars ?? 0), 0);
-                  const openCount = trades.filter(t => t.status === 'open').length;
+                  const allTrades = trades;
+                  const closed = allTrades.filter(t => t.status !== 'open');
+                  const totalPnl = allTrades.reduce((s, t) => s + (t.pnlDollars ?? 0), 0);
+                  const openCount = allTrades.filter(t => t.status === 'open').length;
+                  // Tiered TP rates: count any trade (open or closed) that hit each milestone
+                  const n = allTrades.length;
+                  const tp1Count = allTrades.filter(t => t.tp1Hit || t.status === 'tp3').length;
+                  const tp2Count = allTrades.filter(t => t.tp2Hit || t.status === 'tp3').length;
+                  const tp3Count = allTrades.filter(t => t.status === 'tp3').length;
+                  const slCount  = allTrades.filter(t => t.status === 'sl').length;
+                  const pct = (c: number) => n ? `${Math.round(c / n * 100)}%` : '—';
                   return (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-                      {[
-                        { label: 'Total', value: trades.length },
-                        { label: 'Open', value: openCount, color: '#6366f1' },
-                        { label: 'Win rate', value: closed.length ? `${Math.round(wins/closed.length*100)}%` : '—', color: '#22c55e' },
-                        { label: 'Net P&L', value: `$${totalPnl.toFixed(0)}`, color: totalPnl >= 0 ? '#22c55e' : '#ef4444' },
-                      ].map(({ label, value, color }) => (
-                        <div key={label} style={{ padding: '10px 12px', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 8, textAlign: 'center' }}>
-                          <div style={{ color: 'var(--c-faint)', fontSize: 11 }}>{label}</div>
-                          <div style={{ color: color ?? 'var(--c-text)', fontWeight: 700, fontSize: 16 }}>{value}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {/* Top row: totals */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                        {[
+                          { label: 'Total', value: n, color: 'var(--c-text)' },
+                          { label: 'Open', value: openCount, color: '#6366f1' },
+                          { label: 'Closed', value: closed.length, color: 'var(--c-muted)' },
+                          { label: 'Net P&L', value: `$${totalPnl.toFixed(0)}`, color: totalPnl >= 0 ? '#22c55e' : '#ef4444' },
+                        ].map(({ label, value, color }) => (
+                          <div key={label} style={{ padding: '10px 12px', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 8, textAlign: 'center' }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 11 }}>{label}</div>
+                            <div style={{ color, fontWeight: 700, fontSize: 16 }}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* Tiered TP stats */}
+                      {n > 0 && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                          {[
+                            { label: 'TP1 Rate', value: pct(tp1Count), sub: `${tp1Count}/${n}`, color: '#4ade80' },
+                            { label: 'TP2 Rate', value: pct(tp2Count), sub: `${tp2Count}/${n}`, color: '#22c55e' },
+                            { label: 'TP3 (Full)', value: pct(tp3Count), sub: `${tp3Count}/${n}`, color: '#16a34a' },
+                            { label: 'SL Rate', value: pct(slCount), sub: `${slCount}/${n}`, color: '#ef4444' },
+                          ].map(({ label, value, sub, color }) => (
+                            <div key={label} style={{ padding: '8px 10px', background: 'var(--c-card)', border: `1px solid ${color}33`, borderRadius: 8, textAlign: 'center' }}>
+                              <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>{label}</div>
+                              <div style={{ color, fontWeight: 700, fontSize: 15 }}>{value}</div>
+                              <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{sub}</div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
                   );
                 })()}
@@ -2236,7 +2341,7 @@ export default function Home() {
                 {trades.map((t, tIdx) => {
                   const accentColor = CARD_ACCENT[tIdx % CARD_ACCENT.length];
                   const dirColor = t.direction === 'LONG' ? '#22c55e' : '#ef4444';
-                  const statusColor: Record<string, string> = { open: '#6366f1', tp1: '#22c55e', tp2: '#22c55e', tp3: '#22c55e', sl: '#ef4444', manual: 'var(--c-muted)' };
+                  const statusColor: Record<string, string> = { open: '#6366f1', tp3: '#22c55e', sl: '#ef4444', manual: 'var(--c-muted)' };
                   const isOpen = t.status === 'open';
 
                   // Live P&L calculations
@@ -2304,6 +2409,15 @@ export default function Home() {
                           <button onClick={() => deleteTrade(t.id)} style={{ background: 'none', border: 'none', color: 'var(--c-faintest)', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
                         </div>
                       </div>
+
+                      {/* TP milestone badges */}
+                      {(t.tp1Hit || t.tp2Hit || t.tp3Hit) && (
+                        <div style={{ display: 'flex', gap: 5, marginBottom: 8, flexWrap: 'wrap' }}>
+                          {t.tp1Hit && <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#4ade8022', color: '#4ade80', border: '1px solid #4ade8044' }}>✓ TP1</span>}
+                          {t.tp2Hit && <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}>✓ TP2</span>}
+                          {t.tp3Hit && <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#16a34a22', color: '#16a34a', border: '1px solid #16a34a44' }}>✓ TP3 FULL</span>}
+                        </div>
+                      )}
 
                       {/* Live price + unrealized P&L (open trades only) */}
                       {isOpen && (
@@ -2490,22 +2604,23 @@ export default function Home() {
                         </span>
                       </div>
 
-                      {/* Close buttons for open trades */}
+                      {/* Close buttons for open trades — TPs are auto-detected, only manual overrides here */}
                       {isOpen && (
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {(['tp1', 'tp2', 'tp3'] as const).map(tp => (
-                            <button key={tp} onClick={() => updateTradeStatus(t.id, tp, t[tp])} style={{
-                              padding: '5px 12px', background: '#16a34a22', border: '1px solid #16a34a44',
-                              borderRadius: 6, color: '#22c55e', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-                            }}>
-                              Hit {tp.toUpperCase()} (${t[tp].toFixed(3)})
-                            </button>
-                          ))}
+                          <div style={{ width: '100%', fontSize: 10, color: 'var(--c-faintest)', marginBottom: 2 }}>
+                            Auto-tracking TPs/SL · manual overrides:
+                          </div>
                           <button onClick={() => updateTradeStatus(t.id, 'sl', t.stopLoss)} style={{
                             padding: '5px 12px', background: '#ef444422', border: '1px solid #ef444444',
                             borderRadius: 6, color: '#ef4444', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                           }}>
-                            Stopped Out (${t.stopLoss.toFixed(3)})
+                            Force SL (${t.stopLoss.toFixed(t.stopLoss < 1 ? 6 : t.stopLoss < 100 ? 4 : 2)})
+                          </button>
+                          <button onClick={() => updateTradeStatus(t.id, 'tp3', t.tp3)} style={{
+                            padding: '5px 12px', background: '#16a34a22', border: '1px solid #16a34a44',
+                            borderRadius: 6, color: '#16a34a', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                          }}>
+                            Force Close TP3 (${t.tp3.toFixed(t.tp3 < 1 ? 6 : t.tp3 < 100 ? 4 : 2)})
                           </button>
                           <button onClick={() => updateTradeStatus(t.id, 'manual')} style={{
                             padding: '5px 12px', background: 'var(--c-border)', border: '1px solid var(--c-border)',
@@ -2566,7 +2681,7 @@ export default function Home() {
               const fa = t.fullAnalysis;
               const isOpen = t.status === 'open';
               const dirColor = t.direction === 'LONG' ? '#22c55e' : '#ef4444';
-              const statusColors: Record<string, string> = { open: '#6366f1', tp1: '#22c55e', tp2: '#22c55e', tp3: '#22c55e', sl: '#ef4444', manual: 'var(--c-muted)' };
+              const statusColors: Record<string, string> = { open: '#6366f1', tp3: '#22c55e', sl: '#ef4444', manual: 'var(--c-muted)' };
               const statusColor = statusColors[t.status];
               const fmtP = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
               const pctFromEntry = (p: number) => ((p - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1)).toFixed(2);
@@ -2593,6 +2708,10 @@ export default function Home() {
                         {t.status.toUpperCase()}
                       </span>
                       <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>{t.leverage}× · {t.bestSetup} · {t.mode.toUpperCase()}</span>
+                      {/* TP milestone badges */}
+                      {t.tp1Hit && <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#4ade8022', color: '#4ade80', border: '1px solid #4ade8044' }}>✓ TP1</span>}
+                      {t.tp2Hit && <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}>✓ TP2</span>}
+                      {t.tp3Hit && <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#16a34a22', color: '#16a34a', border: '1px solid #16a34a44' }}>✓ TP3</span>}
                     </div>
                     <span style={{ fontSize: 11, color: 'var(--c-faintest)' }}>{t.timestamp} {t.timezone}</span>
                   </div>

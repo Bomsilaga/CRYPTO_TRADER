@@ -16,6 +16,9 @@ export async function PATCH(
   if ('highestPrice'  in body) patch.highest_price   = body.highestPrice;
   if ('lowestPrice'   in body) patch.lowest_price    = body.lowestPrice;
   if ('hourlyCandles' in body) patch.hourly_candles  = body.hourlyCandles;
+  if ('tp1Hit'        in body) patch.tp1_hit         = body.tp1Hit;
+  if ('tp2Hit'        in body) patch.tp2_hit         = body.tp2Hit;
+  if ('tp3Hit'        in body) patch.tp3_hit         = body.tp3Hit;
 
   try {
     await supabaseFetch(`/crypto_trades?id=eq.${encodeURIComponent(id)}`, {

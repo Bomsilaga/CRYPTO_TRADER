@@ -36,6 +36,9 @@ function toDb(t: TradeRow, syncKey: string) {
     lowest_price:      t.lowestPrice ?? null,
     hourly_candles:    t.hourlyCandles ?? [],
     full_analysis:     t.fullAnalysis ?? {},
+    tp1_hit:           t.tp1Hit ?? false,
+    tp2_hit:           t.tp2Hit ?? false,
+    tp3_hit:           t.tp3Hit ?? false,
     updated_at:        new Date().toISOString(),
   };
 }
@@ -72,6 +75,9 @@ function fromDb(row: TradeRow) {
     lowestPrice:      row.lowest_price  != null ? Number(row.lowest_price)  : undefined,
     hourlyCandles:    row.hourly_candles ?? [],
     fullAnalysis:     row.full_analysis ?? {},
+    tp1Hit:           row.tp1_hit === true,
+    tp2Hit:           row.tp2_hit === true,
+    tp3Hit:           row.tp3_hit === true,
     createdAt:        row.created_at,
   };
 }
