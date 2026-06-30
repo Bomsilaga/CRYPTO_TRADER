@@ -94,6 +94,28 @@ interface TradeResult {
   };
 }
 
+interface HourlyCandle {
+  hour: string;   // ISO hour bucket e.g. "2026-06-30T10:00:00Z"
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+interface FullAnalysisSnapshot {
+  direction: string;
+  totalScore: number;
+  confidence: number;
+  alignmentScore: number;
+  alignmentQuality: string;
+  verdict: string;
+  signalText: string;
+  leverageWarning?: string;
+  deep: ScanResult['deep'];
+  avgMoves?: { daily: number; h8: number; h4: number };
+  spotAvgMoves?: { daily: number; h8: number; h4: number } | null;
+}
+
 interface TradeEntry {
   id: string;
   symbol: string;
@@ -120,6 +142,12 @@ interface TradeEntry {
   exitPrice?: number;
   pnlDollars?: number;
   orderId?: string;
+  // Extended for log + sync
+  notes?: string;
+  highestPrice?: number;
+  lowestPrice?: number;
+  hourlyCandles?: HourlyCandle[];
+  fullAnalysis?: FullAnalysisSnapshot;
 }
 
 const TIMEZONES = [
@@ -166,67 +194,67 @@ function RiskCalculator() {
     : '0.00';
 
   const row = (label: string, value: string, color?: string) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #0f0f17' }}>
-      <span style={{ color: '#64748b', fontSize: 12 }}>{label}</span>
-      <span style={{ color: color ?? '#e2e8f0', fontSize: 12, fontWeight: 600 }}>{value}</span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid var(--c-border)' }}>
+      <span style={{ color: 'var(--c-dim)', fontSize: 12 }}>{label}</span>
+      <span style={{ color: color ?? 'var(--c-text)', fontSize: 12, fontWeight: 600 }}>{value}</span>
     </div>
   );
 
   return (
-    <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-      <div style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8', marginBottom: 14 }}>📐 POSITION CALCULATOR</div>
+    <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+      <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)', marginBottom: 14 }}>📐 POSITION CALCULATOR</div>
 
       {/* Inputs */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
         <div>
-          <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>Account size (USDT)</label>
+          <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 3 }}>Account size (USDT)</label>
           <input type="number" value={accountSize} onChange={e => setAccountSize(+e.target.value || 0)}
-            style={{ width: '100%', padding: '7px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+            style={{ width: '100%', padding: '7px 10px', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
         </div>
         <div>
-          <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>Daily profit target ($)</label>
+          <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 3 }}>Daily profit target ($)</label>
           <input type="number" value={dailyTarget} onChange={e => setDailyTarget(+e.target.value || 0)}
-            style={{ width: '100%', padding: '7px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+            style={{ width: '100%', padding: '7px 10px', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
         </div>
         <div>
-          <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>Risk per trade (%)</label>
+          <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 3 }}>Risk per trade (%)</label>
           <input type="number" min={0.1} max={10} step={0.1} value={riskPct} onChange={e => setRiskPct(+e.target.value || 1)}
-            style={{ width: '100%', padding: '7px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+            style={{ width: '100%', padding: '7px 10px', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
         </div>
         <div>
-          <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>Spot move target (%)</label>
+          <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 3 }}>Spot move target (%)</label>
           <input type="number" min={0.1} max={10} step={0.1} value={spotTargetPct} onChange={e => setSpotTargetPct(+e.target.value || 1)}
-            style={{ width: '100%', padding: '7px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+            style={{ width: '100%', padding: '7px 10px', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
         </div>
       </div>
 
       {/* Leverage selector */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span style={{ color: '#64748b', fontSize: 11, minWidth: 60 }}>Leverage</span>
+        <span style={{ color: 'var(--c-dim)', fontSize: 11, minWidth: 60 }}>Leverage</span>
         <div style={{ display: 'flex', gap: 6 }}>
           {[3, 5, 10, 20].map(lv => (
             <button key={lv} onClick={() => setLeverage(lv)}
               style={{ padding: '4px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700,
-                background: leverage === lv ? '#6366f133' : '#0a0a0f',
-                color: leverage === lv ? '#818cf8' : '#475569',
+                background: leverage === lv ? '#6366f133' : 'var(--c-inner)',
+                color: leverage === lv ? '#818cf8' : 'var(--c-faint)',
               }}>
               {lv}×
             </button>
           ))}
           <input type="number" min={1} max={100} value={leverage} onChange={e => setLeverage(+e.target.value || 1)}
-            style={{ width: 52, padding: '4px 8px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#94a3b8', outline: 'none', fontSize: 12, textAlign: 'center' }} />
+            style={{ width: 52, padding: '4px 8px', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-muted)', outline: 'none', fontSize: 12, textAlign: 'center' }} />
         </div>
       </div>
 
       {/* Order type */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <span style={{ color: '#64748b', fontSize: 11, minWidth: 60 }}>Order type</span>
-        <div style={{ display: 'flex', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, overflow: 'hidden' }}>
+        <span style={{ color: 'var(--c-dim)', fontSize: 11, minWidth: 60 }}>Order type</span>
+        <div style={{ display: 'flex', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, overflow: 'hidden' }}>
           {(['limit', 'market'] as const).map(t => (
             <button key={t} onClick={() => setOrderTypeCalc(t)}
               style={{ padding: '4px 14px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                 background: orderTypeCalc === t ? '#6366f133' : 'transparent',
-                color: orderTypeCalc === t ? '#818cf8' : '#475569',
+                color: orderTypeCalc === t ? '#818cf8' : 'var(--c-faint)',
               }}>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -235,7 +263,7 @@ function RiskCalculator() {
       </div>
 
       {/* Results */}
-      <div style={{ background: '#0a0a0f', borderRadius: 8, padding: '10px 14px' }}>
+      <div style={{ background: 'var(--c-inner)', borderRadius: 8, padding: '10px 14px' }}>
         {row('Position size', `$${position.toLocaleString()}`)}
         {row('Max risk this trade', `$${riskDollars.toFixed(2)}`, '#ef4444')}
         {row('Liquidation at', `-${liquidationPct}% spot move`, '#ef4444')}
@@ -247,7 +275,7 @@ function RiskCalculator() {
         {row('ROI on margin per trade', `${((netProfit / accountSize) * 100).toFixed(2)}%`)}
       </div>
 
-      <div style={{ marginTop: 10, fontSize: 11, color: '#334155', lineHeight: 1.6 }}>
+      <div style={{ marginTop: 10, fontSize: 11, color: 'var(--c-faintest)', lineHeight: 1.6 }}>
         Rule: Risk ${riskDollars.toFixed(0)} per trade max · Stop at 1% against entry · Close 50% at TP1 · Never hold through funding.
       </div>
     </div>
@@ -366,11 +394,31 @@ function Badge({ ok, label }: { ok: boolean; label: string }) {
   );
 }
 
+function SyncKeyInput({ onLoad }: { onLoad: (key: string) => void }) {
+  const [val, setVal] = useState('');
+  return (
+    <div style={{ display: 'flex', gap: 8 }}>
+      <input
+        value={val}
+        onChange={e => setVal(e.target.value)}
+        placeholder="Paste sync key from another device…"
+        style={{ flex: 1, padding: '8px 10px', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 12, fontFamily: 'monospace' }}
+      />
+      <button
+        onClick={() => { if (val.trim()) { onLoad(val.trim()); setVal(''); } }}
+        style={{ padding: '8px 14px', background: '#6366f122', border: '1px solid #6366f144', borderRadius: 6, color: '#818cf8', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+      >
+        Load
+      </button>
+    </div>
+  );
+}
+
 function ScoreBar({ score }: { score: number }) {
   const color = score >= 80 ? '#22c55e' : score >= 60 ? '#eab308' : '#ef4444';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ flex: 1, height: 8, background: '#1e1e2e', borderRadius: 4, overflow: 'hidden' }}>
+      <div style={{ flex: 1, height: 8, background: 'var(--c-border)', borderRadius: 4, overflow: 'hidden' }}>
         <div style={{ width: `${score}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.5s' }} />
       </div>
       <span style={{ color, fontWeight: 700, minWidth: 36 }}>{score}</span>
@@ -380,7 +428,8 @@ function ScoreBar({ score }: { score: number }) {
 
 /* ─── Main component ─────────────────────────────────────────────────────── */
 
-type Tab = 'scan' | 'calc' | 'trades' | 'settings';
+type Tab = 'scan' | 'calc' | 'trades' | 'log' | 'settings';
+type Theme = 'dark' | 'light';
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>('scan');
@@ -433,10 +482,16 @@ export default function Home() {
   const [tradeResult, setTradeResult] = useState<TradeResult | null>(null);
   const [manualMarginUsdt, setManualMarginUsdt] = useState<number | ''>('');
 
+  // Theme
+  const [theme, setTheme] = useState<Theme>('dark');
+
   // Trade journal
   const [trades, setTrades] = useState<TradeEntry[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, { price: number; updatedAt: number }>>({});
   const [liveRefreshing, setLiveRefreshing] = useState(false);
+  const [syncKey, setSyncKey] = useState('');
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'ok' | 'error'>('idle');
+  const [pendingSync, setPendingSync] = useState<Set<string>>(new Set());
 
   // BTC comparison
   const [btcResult, setBtcResult] = useState<ScanResult | null>(null);
@@ -473,14 +528,25 @@ export default function Home() {
         if (s.anthropicKey)   setAnthropicKey(s.anthropicKey);
         if (s.openaiKey)      setOpenaiKey(s.openaiKey);
         if (s.deepseekKey)    setDeepseekKey(s.deepseekKey);
+        if (s.theme)          setTheme(s.theme as Theme);
       }
+    } catch { /* ignore */ }
+
+    // Init sync key — generate UUID if none stored
+    try {
+      let key = localStorage.getItem('4scans-sync-key');
+      if (!key) {
+        key = crypto.randomUUID();
+        localStorage.setItem('4scans-sync-key', key);
+      }
+      setSyncKey(key);
     } catch { /* ignore */ }
   }, []);
 
   function saveSettings() {
     try {
       localStorage.setItem('4scans-settings', JSON.stringify({
-        apiKey, apiSecret, liveMode, riskPct, orderType, aiProvider,
+        apiKey, apiSecret, liveMode, riskPct, orderType, aiProvider, theme,
         accountSize, dailyLossLimit, dailyTarget, maxTrades, targetSpotPct, timezone,
         anthropicKey, openaiKey, deepseekKey,
       }));
@@ -489,7 +555,7 @@ export default function Home() {
     } catch { /* ignore */ }
   }
 
-  // Load trade journal
+  // Load trade journal from localStorage first (fast), then sync from Supabase
   useEffect(() => {
     try {
       const saved = localStorage.getItem('4scans-trades');
@@ -497,9 +563,51 @@ export default function Home() {
     } catch { /* ignore */ }
   }, []);
 
+  // Once syncKey is ready, load from Supabase and merge
+  useEffect(() => {
+    if (!syncKey) return;
+    setSyncStatus('syncing');
+    fetch(`/api/trades?syncKey=${encodeURIComponent(syncKey)}`)
+      .then(r => r.json())
+      .then((data: { ok: boolean; trades?: TradeEntry[] }) => {
+        if (data.ok && data.trades) {
+          setTrades(data.trades);
+          try { localStorage.setItem('4scans-trades', JSON.stringify(data.trades)); } catch { /* ignore */ }
+          setSyncStatus('ok');
+        }
+      })
+      .catch(() => setSyncStatus('error'));
+  }, [syncKey]);
+
+  // Flush pending high/low + hourly updates to Supabase (debounced 30s)
+  useEffect(() => {
+    if (!syncKey || pendingSync.size === 0) return;
+    const timer = setTimeout(async () => {
+      const ids = [...pendingSync];
+      setPendingSync(new Set());
+      for (const id of ids) {
+        const trade = trades.find(t => t.id === id);
+        if (!trade) continue;
+        try {
+          await fetch(`/api/trades/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              highestPrice: trade.highestPrice,
+              lowestPrice: trade.lowestPrice,
+              hourlyCandles: trade.hourlyCandles ?? [],
+            }),
+          });
+        } catch { /* ignore */ }
+      }
+    }, 30_000);
+    return () => clearTimeout(timer);
+  }, [pendingSync, syncKey, trades]);
+
   // Live price polling for open trades — refresh every 8 seconds
   useEffect(() => {
-    const openSymbols = [...new Set(trades.filter(t => t.status === 'open').map(t => t.symbol))];
+    const openTrades = trades.filter(t => t.status === 'open');
+    const openSymbols = [...new Set(openTrades.map(t => t.symbol))];
     if (!openSymbols.length) return;
 
     async function refresh() {
@@ -508,13 +616,46 @@ export default function Home() {
         const res = await fetch(`/api/ticker?symbols=${openSymbols.join(',')}`);
         const data = await res.json() as { ok: boolean; prices: { symbol: string; price: number | null }[] };
         if (data.ok) {
+          const priceMap: Record<string, number> = {};
+          data.prices.forEach(p => { if (p.price !== null) priceMap[p.symbol] = p.price; });
+
           setLivePrices(prev => {
             const next = { ...prev };
-            data.prices.forEach(p => {
-              if (p.price !== null) next[p.symbol] = { price: p.price, updatedAt: Date.now() };
-            });
+            Object.entries(priceMap).forEach(([sym, price]) => { next[sym] = { price, updatedAt: Date.now() }; });
             return next;
           });
+
+          // Update H/L + hourly candles for open trades
+          const nowHour = new Date().toISOString().slice(0, 13) + ':00:00Z';
+          const changedIds = new Set<string>();
+          setTrades(prev => prev.map(t => {
+            if (t.status !== 'open') return t;
+            const price = priceMap[t.symbol];
+            if (price == null) return t;
+            let updated = { ...t };
+            // High/Low tracking
+            if (updated.highestPrice == null || price > updated.highestPrice) { updated.highestPrice = price; changedIds.add(t.id); }
+            if (updated.lowestPrice  == null || price < updated.lowestPrice)  { updated.lowestPrice  = price; changedIds.add(t.id); }
+            // Hourly candle
+            const candles = [...(updated.hourlyCandles ?? [])];
+            const lastIdx = candles.length - 1;
+            if (lastIdx >= 0 && candles[lastIdx].hour === nowHour) {
+              const c = { ...candles[lastIdx] };
+              if (price > c.high) c.high = price;
+              if (price < c.low)  c.low  = price;
+              c.close = price;
+              candles[lastIdx] = c;
+            } else {
+              candles.push({ hour: nowHour, open: price, high: price, low: price, close: price });
+            }
+            updated.hourlyCandles = candles;
+            changedIds.add(t.id);
+            return updated;
+          }));
+
+          if (changedIds.size > 0) {
+            setPendingSync(prev => new Set([...prev, ...changedIds]));
+          }
         }
       } catch { /* ignore */ }
       setLiveRefreshing(false);
@@ -523,27 +664,76 @@ export default function Home() {
     refresh();
     const id = setInterval(refresh, 8000);
     return () => clearInterval(id);
-  }, [trades]);
+  }, [trades.filter(t => t.status === 'open').map(t => t.id).join(',')]);
 
   function saveTrades(updated: TradeEntry[]) {
     setTrades(updated);
     try { localStorage.setItem('4scans-trades', JSON.stringify(updated)); } catch { /* ignore */ }
   }
 
-  function updateTradeStatus(id: string, status: TradeEntry['status'], exitPrice?: number) {
+  async function pushTrade(trade: TradeEntry) {
+    if (!syncKey) return;
+    try {
+      await fetch('/api/trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trade, syncKey }),
+      });
+      setSyncStatus('ok');
+    } catch { setSyncStatus('error'); }
+  }
+
+  async function patchTrade(id: string, patch: Partial<TradeEntry>) {
+    if (!syncKey) return;
+    try {
+      await fetch(`/api/trades/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+    } catch { /* ignore */ }
+  }
+
+  async function updateTradeNotes(id: string, notes: string) {
+    setTrades(prev => prev.map(t => t.id === id ? { ...t, notes } : t));
+    try { const all = trades.map(t => t.id === id ? { ...t, notes } : t); localStorage.setItem('4scans-trades', JSON.stringify(all)); } catch { /* ignore */ }
+    await patchTrade(id, { notes });
+  }
+
+  async function updateTradeStatus(id: string, status: TradeEntry['status'], exitPrice?: number) {
     const updated = trades.map(t => {
       if (t.id !== id) return t;
-      const pnlDollars = exitPrice
-        ? (t.direction === 'LONG' ? exitPrice - t.entry : t.entry - exitPrice)
-          / t.entry * t.entry * t.leverage * (t.riskPct / 100) / ((Math.abs(t.entry - t.stopLoss) / t.entry) * t.leverage)
+      const slDist = Math.abs(t.entry - t.stopLoss) / t.entry;
+      const pnlDollars = exitPrice != null && slDist > 0
+        ? t.qty * (exitPrice - t.entry) * (t.direction === 'LONG' ? 1 : -1)
         : undefined;
       return { ...t, status, exitPrice, pnlDollars };
     });
     saveTrades(updated);
+    await patchTrade(id, { status, exitPrice, pnlDollars: updated.find(t => t.id === id)?.pnlDollars });
   }
 
-  function deleteTrade(id: string) {
+  async function deleteTrade(id: string) {
     saveTrades(trades.filter(t => t.id !== id));
+    if (!syncKey) return;
+    try { await fetch(`/api/trades/${id}`, { method: 'DELETE' }); } catch { /* ignore */ }
+  }
+
+  async function changeSyncKey(newKey: string) {
+    const key = newKey.trim();
+    if (!key) return;
+    setSyncKey(key);
+    try { localStorage.setItem('4scans-sync-key', key); } catch { /* ignore */ }
+    setSyncStatus('syncing');
+    try {
+      const r = await fetch(`/api/trades?syncKey=${encodeURIComponent(key)}`);
+      const data = await r.json() as { ok: boolean; trades?: TradeEntry[] };
+      if (data.ok && data.trades) {
+        setTrades(data.trades);
+        try { localStorage.setItem('4scans-trades', JSON.stringify(data.trades)); } catch { /* ignore */ }
+        setSyncStatus('ok');
+      }
+    } catch { setSyncStatus('error'); }
   }
 
   // Poll for latest autoscan result every 60s
@@ -753,8 +943,27 @@ export default function Home() {
           marginUsed,
           status: 'open',
           orderId: data.orderId,
+          notes: '',
+          highestPrice: ep,
+          lowestPrice: ep,
+          hourlyCandles: [],
+          fullAnalysis: {
+            direction: result.direction,
+            totalScore: result.totalScore,
+            confidence: result.confidence,
+            alignmentScore: result.alignmentScore,
+            alignmentQuality: result.alignmentQuality,
+            verdict: result.verdict,
+            signalText: result.masterSignal.signalText,
+            leverageWarning: result.masterSignal.leverageWarning,
+            deep: result.deep,
+            avgMoves: result.avgMoves,
+            spotAvgMoves: result.spotAvgMoves,
+          },
         };
-        saveTrades([entry, ...trades]);
+        const newTrades = [entry, ...trades];
+        saveTrades(newTrades);
+        await pushTrade(entry);
       }
     } catch (e) {
       setTradeResult({ error: String(e) });
@@ -763,49 +972,93 @@ export default function Home() {
     }
   }
 
-  const dirColor = result?.direction === 'LONG' ? '#22c55e' : result?.direction === 'SHORT' ? '#ef4444' : '#94a3b8';
+  const dirColor = result?.direction === 'LONG' ? '#22c55e' : result?.direction === 'SHORT' ? '#ef4444' : 'var(--c-muted)';
   const canTrade = result?.ok && result.direction !== 'NEUTRAL';
+
+  const isDark = theme === 'dark';
+  // CSS variable values injected onto <main>
+  const cssVars = isDark ? {
+    '--c-bg':        '#080810',
+    '--c-card':      '#111118',
+    '--c-inner':     '#0a0a0f',
+    '--c-border':    '#1e1e2e',
+    '--c-text':      '#e2e8f0',
+    '--c-muted':     '#94a3b8',
+    '--c-dim':       '#64748b',
+    '--c-faint':     '#475569',
+    '--c-faintest':  '#334155',
+    '--c-subtle':    '#cbd5e1',
+  } : {
+    '--c-bg':        '#f1f5f9',
+    '--c-card':      '#ffffff',
+    '--c-inner':     '#f8fafc',
+    '--c-border':    '#e2e8f0',
+    '--c-text':      '#0f172a',
+    '--c-muted':     '#1e293b',
+    '--c-dim':       '#334155',
+    '--c-faint':     '#475569',
+    '--c-faintest':  '#64748b',
+    '--c-subtle':    '#1e293b',
+  };
 
   const TAB_STYLE = (active: boolean) => ({
     flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer',
     fontWeight: 700, fontSize: 13,
-    background: active ? '#111118' : 'transparent',
-    color: active ? '#e2e8f0' : '#475569',
+    background: active ? 'var(--c-card)' : 'transparent',
+    color: active ? 'var(--c-text)' : 'var(--c-faint)',
     borderBottom: active ? '2px solid #6366f1' : '2px solid transparent',
     transition: 'all 0.15s',
   });
 
   return (
-    <main style={{ maxWidth: 920, margin: '0 auto', padding: '0 0 40px' }}>
+    <main data-theme={theme} style={{ maxWidth: 920, margin: '0 auto', padding: '0 0 40px', background: 'var(--c-bg)', minHeight: '100vh', ...cssVars } as React.CSSProperties}>
+      <style>{`body { background: ${isDark ? '#080810' : '#f1f5f9'}; margin: 0; }`}</style>
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div style={{ padding: '20px 16px 0', marginBottom: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <div>
-            <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.5px', margin: 0 }}>
+            <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.5px', margin: 0, color: 'var(--c-text)' }}>
               🚀 4SCANS
             </h1>
-            <p style={{ color: '#64748b', fontSize: 12, marginTop: 3, marginBottom: 0 }}>
+            <p style={{ color: 'var(--c-dim)', fontSize: 12, marginTop: 3, marginBottom: 0 }}>
               Bybit perpetuals · ICT + Wyckoff · {liveMode ? <span style={{ color: '#ef4444', fontWeight: 700 }}>⚡ LIVE</span> : <span style={{ color: '#22c55e' }}>📄 PAPER</span>}
             </p>
           </div>
-          {/* Mode badge */}
-          <div style={{
-            padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-            background: liveMode ? '#ef444422' : '#16a34a22',
-            color: liveMode ? '#ef4444' : '#22c55e',
-            border: `1px solid ${liveMode ? '#ef444444' : '#16a34a44'}`,
-          }} onClick={() => setTab('settings')}>
-            {liveMode ? '⚡ Live' : '📄 Paper'}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {/* Theme toggle */}
+            <button onClick={() => {
+              const next: Theme = theme === 'dark' ? 'light' : 'dark';
+              setTheme(next);
+              try { const s = JSON.parse(localStorage.getItem('4scans-settings') ?? '{}'); localStorage.setItem('4scans-settings', JSON.stringify({ ...s, theme: next })); } catch { /* ignore */ }
+            }} style={{
+              padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              background: 'var(--c-card)', color: 'var(--c-dim)',
+              border: '1px solid var(--c-border)',
+            }}>
+              {isDark ? '☀️ Light' : '🌙 Dark'}
+            </button>
+            {/* Mode badge */}
+            <div style={{
+              padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              background: liveMode ? '#ef444422' : '#16a34a22',
+              color: liveMode ? '#ef4444' : '#22c55e',
+              border: `1px solid ${liveMode ? '#ef444444' : '#16a34a44'}`,
+            }} onClick={() => setTab('settings')}>
+              {liveMode ? '⚡ Live' : '📄 Paper'}
+            </div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', borderBottom: '1px solid #1e1e2e', marginBottom: 0 }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--c-border)', marginBottom: 0 }}>
           <button style={TAB_STYLE(tab === 'scan')} onClick={() => setTab('scan')}>📡 Scanner</button>
           <button style={TAB_STYLE(tab === 'calc')} onClick={() => setTab('calc')}>📐 Calc</button>
           <button style={TAB_STYLE(tab === 'trades')} onClick={() => setTab('trades')}>
-            📒 Trades{trades.length > 0 ? ` (${trades.length})` : ''}
+            📒 Trades{trades.some(t => t.status === 'open') ? ` (${trades.filter(t => t.status === 'open').length})` : ''}
+          </button>
+          <button style={TAB_STYLE(tab === 'log')} onClick={() => setTab('log')}>
+            📋 Log{trades.length > 0 ? ` (${trades.length})` : ''}
           </button>
           <button style={TAB_STYLE(tab === 'settings')} onClick={() => setTab('settings')}>⚙️</button>
         </div>
@@ -825,8 +1078,8 @@ export default function Home() {
                 onKeyDown={e => e.key === 'Enter' && scan()}
                 placeholder="e.g. ETHUSDT"
                 style={{
-                  flex: 1, padding: '11px 14px', background: '#111118',
-                  border: '1px solid #1e1e2e', borderRadius: 8, color: '#e2e8f0', outline: 'none', fontSize: 14,
+                  flex: 1, padding: '11px 14px', background: 'var(--c-card)',
+                  border: '1px solid var(--c-border)', borderRadius: 8, color: 'var(--c-text)', outline: 'none', fontSize: 14,
                 }}
               />
               <button onClick={() => scan()} disabled={loading} style={{
@@ -840,7 +1093,7 @@ export default function Home() {
 
             {/* Market overview: grouped, collapsible, sortable */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
-              <span style={{ fontSize: 11, color: '#334155' }}>
+              <span style={{ fontSize: 11, color: 'var(--c-faintest)' }}>
                 {marketScanning
                   ? `Scanning ${marketProgress} / ${POPULAR.length}…`
                   : Object.keys(marketOv).length > 0
@@ -852,8 +1105,8 @@ export default function Home() {
                 disabled={marketScanning}
                 style={{
                   padding: '4px 12px', background: '#0f172a',
-                  border: '1px solid #334155', borderRadius: 6,
-                  color: marketScanning ? '#475569' : '#94a3b8',
+                  border: '1px solid var(--c-faintest)', borderRadius: 6,
+                  color: marketScanning ? 'var(--c-faint)' : 'var(--c-muted)',
                   cursor: marketScanning ? 'not-allowed' : 'pointer', fontSize: 11, fontWeight: 600,
                 }}
               >
@@ -874,8 +1127,8 @@ export default function Home() {
                 const best = scored[0]?.ov;
                 const bestDir = best?.direction;
                 const bestScore = best?.score ?? null;
-                const dirColor = bestDir === 'LONG' ? '#22c55e' : bestDir === 'SHORT' ? '#ef4444' : '#64748b';
-                const scoreColor = bestScore === null ? '#475569' : bestScore >= 80 ? '#22c55e' : bestScore >= 65 ? '#eab308' : '#64748b';
+                const dirColor = bestDir === 'LONG' ? '#22c55e' : bestDir === 'SHORT' ? '#ef4444' : 'var(--c-dim)';
+                const scoreColor = bestScore === null ? 'var(--c-faint)' : bestScore >= 80 ? '#22c55e' : bestScore >= 65 ? '#eab308' : 'var(--c-dim)';
 
                 // Sort symbols by score desc within expanded group
                 const sorted = isExpanded
@@ -883,7 +1136,7 @@ export default function Home() {
                   : group.symbols;
 
                 return (
-                  <div key={group.label} style={{ border: '1px solid #1e1e2e', borderRadius: 8, overflow: 'hidden' }}>
+                  <div key={group.label} style={{ border: '1px solid var(--c-border)', borderRadius: 8, overflow: 'hidden' }}>
                     {/* Group header — click to toggle */}
                     <button
                       onClick={() => setExpandedGroups(prev => {
@@ -893,11 +1146,11 @@ export default function Home() {
                       })}
                       style={{
                         width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '7px 10px', background: isExpanded ? '#111118' : '#0a0a0f',
+                        padding: '7px 10px', background: isExpanded ? 'var(--c-card)' : 'var(--c-inner)',
                         border: 'none', cursor: 'pointer', gap: 8,
                       }}
                     >
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', letterSpacing: '0.05em' }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.05em' }}>
                         {group.label}
                       </span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
@@ -912,36 +1165,36 @@ export default function Home() {
                           </>
                         )}
                         {marketScanning && !scanned && (
-                          <span style={{ fontSize: 10, color: '#334155' }}>…</span>
+                          <span style={{ fontSize: 10, color: 'var(--c-faintest)' }}>…</span>
                         )}
-                        <span style={{ fontSize: 10, color: '#334155' }}>{group.symbols.length}</span>
-                        <span style={{ fontSize: 10, color: '#334155' }}>{isExpanded ? '▲' : '▼'}</span>
+                        <span style={{ fontSize: 10, color: 'var(--c-faintest)' }}>{group.symbols.length}</span>
+                        <span style={{ fontSize: 10, color: 'var(--c-faintest)' }}>{isExpanded ? '▲' : '▼'}</span>
                       </div>
                     </button>
 
                     {/* Expanded: 3-column scored grid */}
                     {isExpanded && (
-                      <div style={{ padding: '6px 6px 6px', background: '#080810', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 5 }}>
+                      <div style={{ padding: '6px 6px 6px', background: 'var(--c-bg)', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 5 }}>
                         {sorted.map(s => {
                           const ov = marketOv[s];
                           const lbl = s.replace('1000', '').replace('USDT', '');
                           const dir = ov?.direction ?? null;
                           const score = ov?.score ?? null;
                           const active = symbol === s;
-                          const dc = dir === 'LONG' ? '#22c55e' : dir === 'SHORT' ? '#ef4444' : '#475569';
-                          const sc = score === null ? '#334155' : score >= 80 ? '#22c55e' : score >= 65 ? '#eab308' : '#64748b';
+                          const dc = dir === 'LONG' ? '#22c55e' : dir === 'SHORT' ? '#ef4444' : 'var(--c-faint)';
+                          const sc = score === null ? 'var(--c-faintest)' : score >= 80 ? '#22c55e' : score >= 65 ? '#eab308' : 'var(--c-dim)';
                           return (
                             <button key={s} onClick={() => { setSymbol(s); scan(s); }} style={{
                               padding: '7px 8px', textAlign: 'left',
-                              background: active ? '#1e1b4b' : ov ? `${dc}0d` : '#0a0a0f',
+                              background: active ? '#1e1b4b' : ov ? `${dc}0d` : 'var(--c-inner)',
                               border: `1px solid ${active ? '#6366f1' : ov ? `${dc}33` : '#1a1a2e'}`,
                               borderRadius: 6, cursor: 'pointer',
                             }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span style={{ fontSize: 11, fontWeight: 700, color: active ? '#818cf8' : '#94a3b8' }}>{lbl}</span>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: active ? '#818cf8' : 'var(--c-muted)' }}>{lbl}</span>
                                 {score !== null
                                   ? <span style={{ fontSize: 13, fontWeight: 800, color: sc }}>{score}</span>
-                                  : marketScanning ? <span style={{ fontSize: 10, color: '#1e1e2e' }}>…</span> : null}
+                                  : marketScanning ? <span style={{ fontSize: 10, color: 'var(--c-border)' }}>…</span> : null}
                               </div>
                               {dir && dir !== 'NEUTRAL' && (
                                 <div style={{ fontSize: 9, color: dc, fontWeight: 600, marginTop: 1 }}>
@@ -959,16 +1212,16 @@ export default function Home() {
             </div>
 
             {/* Autoscan panel */}
-            <div style={{ padding: 14, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+            <div style={{ padding: 14, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8' }}>⚡ AUTOSCAN</span>
-                <span style={{ fontSize: 11, color: '#475569' }}>every 15 min · score ≥ 80</span>
+                <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)' }}>⚡ AUTOSCAN</span>
+                <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>every 15 min · score ≥ 80</span>
               </div>
               {!autoScan || !autoScan.ok ? (
-                <div style={{ color: '#475569', fontSize: 13 }}>{autoScan?.message ?? 'Waiting for first cron scan…'}</div>
+                <div style={{ color: 'var(--c-faint)', fontSize: 13 }}>{autoScan?.message ?? 'Waiting for first cron scan…'}</div>
               ) : (
                 <>
-                  <div style={{ color: '#475569', fontSize: 11, marginBottom: 8 }}>
+                  <div style={{ color: 'var(--c-faint)', fontSize: 11, marginBottom: 8 }}>
                     {autoScan.timestamp} · {autoScan.scanned} pairs · {((autoScan.elapsed ?? 0) / 1000).toFixed(1)}s
                     {autoScan.timedOut && <span style={{ color: '#eab308', marginLeft: 6 }}>⚠ timed out</span>}
                   </div>
@@ -977,10 +1230,10 @@ export default function Home() {
                       {autoScan.alerts.map(a => (
                         <button key={a.symbol} onClick={() => { setSymbol(a.symbol); scan(a.symbol); }} style={{
                           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                          padding: '9px 12px', background: '#0a0a0f', border: '1px solid #1e1e2e',
+                          padding: '9px 12px', background: 'var(--c-inner)', border: '1px solid var(--c-border)',
                           borderRadius: 6, cursor: 'pointer', textAlign: 'left',
                         }}>
-                          <span style={{ fontWeight: 700, color: '#e2e8f0' }}>{a.symbol}</span>
+                          <span style={{ fontWeight: 700, color: 'var(--c-text)' }}>{a.symbol}</span>
                           <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                             <span style={{ color: a.direction === 'LONG' ? '#22c55e' : '#ef4444', fontSize: 12, fontWeight: 700 }}>
                               {a.direction === 'LONG' ? '▲' : '▼'} {a.direction}
@@ -995,7 +1248,7 @@ export default function Home() {
                       ))}
                     </div>
                   ) : (
-                    <div style={{ color: '#475569', fontSize: 13 }}>No signals above 80 in last scan</div>
+                    <div style={{ color: 'var(--c-faint)', fontSize: 13 }}>No signals above 80 in last scan</div>
                   )}
                 </>
               )}
@@ -1012,11 +1265,11 @@ export default function Home() {
             {result?.ok && (
               <>
                 {/* Symbol header */}
-                <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <span style={{ fontWeight: 800, fontSize: 20 }}>{result.symbol}</span>
-                      <span style={{ color: '#475569', marginLeft: 8, fontSize: 13 }}>PERP</span>
+                      <span style={{ color: 'var(--c-faint)', marginLeft: 8, fontSize: 13 }}>PERP</span>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontWeight: 700, fontSize: 20 }}>${result.price.toFixed(4)}</div>
@@ -1028,7 +1281,7 @@ export default function Home() {
                 </div>
 
                 {/* Direction + score */}
-                <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                     <span style={{
                       padding: '5px 16px', borderRadius: 20, fontWeight: 800, fontSize: 16,
@@ -1036,17 +1289,17 @@ export default function Home() {
                     }}>
                       {result.direction === 'LONG' ? '▲' : result.direction === 'SHORT' ? '▼' : '—'} {result.direction}
                     </span>
-                    <span style={{ color: '#64748b', fontSize: 12 }}>{result.bestSetup} · {result.alignmentQuality}</span>
+                    <span style={{ color: 'var(--c-dim)', fontSize: 12 }}>{result.bestSetup} · {result.alignmentQuality}</span>
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                      <span style={{ color: '#64748b', fontSize: 12 }}>Signal Score</span>
-                      <span style={{ color: '#64748b', fontSize: 12 }}>Confidence {result.confidence}%</span>
+                      <span style={{ color: 'var(--c-dim)', fontSize: 12 }}>Signal Score</span>
+                      <span style={{ color: 'var(--c-dim)', fontSize: 12 }}>Confidence {result.confidence}%</span>
                     </div>
                     <ScoreBar score={result.totalScore} />
                   </div>
                   <div>
-                    <div style={{ color: '#64748b', fontSize: 12, marginBottom: 5 }}>Alignment {result.alignmentScore.toFixed(0)}%</div>
+                    <div style={{ color: 'var(--c-dim)', fontSize: 12, marginBottom: 5 }}>Alignment {result.alignmentScore.toFixed(0)}%</div>
                     <ScoreBar score={result.alignmentScore} />
                   </div>
                 </div>
@@ -1057,23 +1310,23 @@ export default function Home() {
                     const btcDir = btcResult.direction;
                     const btcAligned = btcDir === result.direction || btcDir === 'NEUTRAL';
                     const divs = detectBtcDivergences(result, btcResult);
-                    const btcDirColor = btcDir === 'LONG' ? '#22c55e' : btcDir === 'SHORT' ? '#ef4444' : '#94a3b8';
+                    const btcDirColor = btcDir === 'LONG' ? '#22c55e' : btcDir === 'SHORT' ? '#ef4444' : 'var(--c-muted)';
                     return (
                       <div style={{
-                        padding: 14, background: '#111118',
+                        padding: 14, background: 'var(--c-card)',
                         border: `1px solid ${btcAligned ? '#1e3a2e' : '#3a1e1e'}`,
                         borderRadius: 10,
                       }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: divs.length > 0 ? 10 : 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <span style={{ fontWeight: 700, fontSize: 12, color: '#94a3b8' }}>₿ BTC TREND</span>
+                            <span style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-muted)' }}>₿ BTC TREND</span>
                             <span style={{
                               padding: '2px 10px', borderRadius: 4, fontSize: 12, fontWeight: 700,
                               background: `${btcDirColor}22`, color: btcDirColor, border: `1px solid ${btcDirColor}44`,
                             }}>
                               {btcDir === 'LONG' ? '▲' : btcDir === 'SHORT' ? '▼' : '—'} {btcDir}
                             </span>
-                            <span style={{ fontSize: 11, color: '#475569' }}>
+                            <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>
                               Score {btcResult.totalScore} · RSI {btcResult.deep.rsi.toFixed(0)} · {btcResult.deep.wyckoffPhase}
                             </span>
                           </div>
@@ -1100,10 +1353,10 @@ export default function Home() {
                           return (
                             <div style={{ padding: '9px 12px', background: v.bg, border: `1px solid ${v.border}`, borderRadius: 6 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                                <span style={{ fontSize: 10, color: '#64748b', fontWeight: 600, letterSpacing: 1 }}>BTC VERDICT</span>
+                                <span style={{ fontSize: 10, color: 'var(--c-dim)', fontWeight: 600, letterSpacing: 1 }}>BTC VERDICT</span>
                                 <span style={{ fontSize: 12, fontWeight: 800, color: v.color }}>{v.label}</span>
                               </div>
-                              <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.5 }}>{v.reason}</div>
+                              <div style={{ fontSize: 11, color: 'var(--c-muted)', lineHeight: 1.5 }}>{v.reason}</div>
                             </div>
                           );
                         })()}
@@ -1137,7 +1390,7 @@ export default function Home() {
                     qty * (price - ms.entry) * (result.direction === 'LONG' ? 1 : -1);
 
                   const levels = [
-                    { label: 'Entry',     value: ms.entry,    pnlVal: null,                color: '#e2e8f0', pct: null },
+                    { label: 'Entry',     value: ms.entry,    pnlVal: null,                color: 'var(--c-text)', pct: null },
                     { label: 'Stop Loss', value: ms.stopLoss, pnlVal: pnl(ms.stopLoss),    color: '#ef4444', pct: -(slDist * 100) },
                     { label: 'TP1 · 50%', value: ms.tp1,      pnlVal: pnl(ms.tp1),         color: '#4ade80', pct: Math.abs(ms.tp1 - ms.entry) / ms.entry * 100 },
                     { label: 'TP2 · 25%', value: ms.tp2,      pnlVal: pnl(ms.tp2),         color: '#22c55e', pct: Math.abs(ms.tp2 - ms.entry) / ms.entry * 100 },
@@ -1146,12 +1399,12 @@ export default function Home() {
                   ];
 
                   return (
-                    <div style={{ padding: 16, background: '#111118', border: `1px solid ${liqBeforeSL ? '#ef444444' : '#1e1e2e'}`, borderRadius: 10 }}>
-                      <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: '#94a3b8' }}>TRADE LEVELS</div>
+                    <div style={{ padding: 16, background: 'var(--c-card)', border: `1px solid ${liqBeforeSL ? '#ef444444' : 'var(--c-border)'}`, borderRadius: 10 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: 'var(--c-muted)' }}>TRADE LEVELS</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 7 }}>
                         {levels.map(({ label, value, pnlVal, color, pct }) => (
-                          <div key={label} style={{ padding: '9px 10px', background: '#0a0a0f', borderRadius: 7, borderTop: `2px solid ${color}33` }}>
-                            <div style={{ color: '#475569', fontSize: 10, marginBottom: 3 }}>{label}</div>
+                          <div key={label} style={{ padding: '9px 10px', background: 'var(--c-inner)', borderRadius: 7, borderTop: `2px solid ${color}33` }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 10, marginBottom: 3 }}>{label}</div>
                             <div style={{ color, fontWeight: 800, fontSize: 13 }}>
                               {value !== null ? `$${fmt(value)}` : `${ms.netRR.toFixed(2)}×`}
                             </div>
@@ -1171,15 +1424,15 @@ export default function Home() {
 
                       {/* Liquidation row */}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-                        <div style={{ padding: '8px 12px', background: liqBeforeSL ? '#ef444422' : '#0a0a0f', border: `1px solid ${liqBeforeSL ? '#ef444455' : 'transparent'}`, borderRadius: 6 }}>
-                          <div style={{ color: '#475569', fontSize: 11 }}>Liquidation @ {effLev}×</div>
+                        <div style={{ padding: '8px 12px', background: liqBeforeSL ? '#ef444422' : 'var(--c-inner)', border: `1px solid ${liqBeforeSL ? '#ef444455' : 'transparent'}`, borderRadius: 6 }}>
+                          <div style={{ color: 'var(--c-faint)', fontSize: 11 }}>Liquidation @ {effLev}×</div>
                           <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 14 }}>${fmt(liqPrice)}</div>
-                          <div style={{ color: '#475569', fontSize: 10, marginTop: 2 }}>{(liqDist * 100).toFixed(1)}% from entry · MMR 0.5%</div>
+                          <div style={{ color: 'var(--c-faint)', fontSize: 10, marginTop: 2 }}>{(liqDist * 100).toFixed(1)}% from entry · MMR 0.5%</div>
                         </div>
-                        <div style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6 }}>
-                          <div style={{ color: '#475569', fontSize: 11 }}>Rec. Leverage</div>
+                        <div style={{ padding: '8px 12px', background: 'var(--c-inner)', borderRadius: 6 }}>
+                          <div style={{ color: 'var(--c-faint)', fontSize: 11 }}>Rec. Leverage</div>
                           <div style={{ color: '#6366f1', fontWeight: 700, fontSize: 14 }}>{ms.leverage}×</div>
-                          <div style={{ color: '#475569', fontSize: 10, marginTop: 2 }}>Your setting: {effLev}×</div>
+                          <div style={{ color: 'var(--c-faint)', fontSize: 10, marginTop: 2 }}>Your setting: {effLev}×</div>
                         </div>
                       </div>
 
@@ -1205,8 +1458,8 @@ export default function Home() {
                 })()}
 
                 {/* Structure */}
-                <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13, color: '#94a3b8' }}>STRUCTURE</div>
+                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13, color: 'var(--c-muted)' }}>STRUCTURE</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
                     <Badge ok={result.deep.hasBOS}   label="BOS" />
                     <Badge ok={result.deep.hasOB}    label="Order Block" />
@@ -1219,27 +1472,27 @@ export default function Home() {
                   </div>
                   <div style={{ display: 'flex', gap: 20, fontSize: 13 }}>
                     <div>
-                      <span style={{ color: '#64748b' }}>RSI </span>
-                      <span style={{ color: result.deep.rsi > 70 ? '#ef4444' : result.deep.rsi < 30 ? '#22c55e' : '#e2e8f0', fontWeight: 700 }}>
+                      <span style={{ color: 'var(--c-dim)' }}>RSI </span>
+                      <span style={{ color: result.deep.rsi > 70 ? '#ef4444' : result.deep.rsi < 30 ? '#22c55e' : 'var(--c-text)', fontWeight: 700 }}>
                         {result.deep.rsi.toFixed(1)}
                         {result.deep.rsi > 70 ? ' ⚠ Overbought' : result.deep.rsi < 30 ? ' ⚠ Oversold' : ''}
                       </span>
                     </div>
                     <div>
-                      <span style={{ color: '#64748b' }}>Wyckoff </span>
+                      <span style={{ color: 'var(--c-dim)' }}>Wyckoff </span>
                       <span style={{ fontWeight: 600 }}>{result.deep.wyckoffPhase}</span>
                     </div>
                   </div>
                 </div>
 
                 {/* ── AI DEEP ANALYSIS ────────────────────────────────── */}
-                <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <span style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8' }}>🤖 AI DEEP ANALYSIS</span>
+                    <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)' }}>🤖 AI DEEP ANALYSIS</span>
                     <button onClick={getAiExplain} disabled={aiLoading} style={{
-                      padding: '6px 16px', background: aiLoading ? '#1e1e2e' : '#6366f122',
+                      padding: '6px 16px', background: aiLoading ? 'var(--c-border)' : '#6366f122',
                       border: '1px solid #6366f144', borderRadius: 6,
-                      color: aiLoading ? '#475569' : '#818cf8',
+                      color: aiLoading ? 'var(--c-faint)' : '#818cf8',
                       cursor: aiLoading ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 700,
                     }}>
                       {aiLoading ? 'Analysing…' : aiExplanation ? 'Refresh' : 'Get Analysis'}
@@ -1255,14 +1508,14 @@ export default function Home() {
                     ] as { id: AiProvider; label: string; color: string }[]).map(p => (
                       <button key={p.id} onClick={() => { setAiProvider(p.id); setAiExplanation(null); }} style={{
                         padding: '4px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 700,
-                        background: aiProvider === p.id ? `${p.color}22` : '#0a0a0f',
-                        color: aiProvider === p.id ? p.color : '#334155',
-                        border: `1px solid ${aiProvider === p.id ? `${p.color}55` : '#1e1e2e'}`,
+                        background: aiProvider === p.id ? `${p.color}22` : 'var(--c-inner)',
+                        color: aiProvider === p.id ? p.color : 'var(--c-faintest)',
+                        border: `1px solid ${aiProvider === p.id ? `${p.color}55` : 'var(--c-border)'}`,
                       }}>
                         {p.label}
                       </button>
                     ))}
-                    <span style={{ fontSize: 10, color: '#334155', marginLeft: 4, alignSelf: 'center' }}>
+                    <span style={{ fontSize: 10, color: 'var(--c-faintest)', marginLeft: 4, alignSelf: 'center' }}>
                       {aiProvider === 'claude' ? 'ANTHROPIC_API_KEY' : aiProvider === 'openai' ? 'OPENAI_API_KEY' : 'DEEPSEEK_API_KEY'}
                     </span>
                   </div>
@@ -1279,7 +1532,7 @@ export default function Home() {
                   )}
 
                   {aiExplanation && (
-                    <div style={{ color: '#cbd5e1', fontSize: 13, lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    <div style={{ color: 'var(--c-subtle)', fontSize: 13, lineHeight: 1.8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                       {aiExplanation}
                     </div>
                   )}
@@ -1321,8 +1574,8 @@ export default function Home() {
                     ratio <= 3   ? '2–3 days' : '3+ days';
 
                   return (
-                    <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8', marginBottom: 14, letterSpacing: '0.06em' }}>
+                    <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)', marginBottom: 14, letterSpacing: '0.06em' }}>
                         AVG HISTORICAL RANGE
                       </div>
 
@@ -1330,12 +1583,12 @@ export default function Home() {
                       <div style={{ display: 'grid', gridTemplateColumns: sm ? '56px 1fr 1fr 1fr' : '56px 1fr 1fr 1fr', gap: 6, marginBottom: 14 }}>
                         <div />
                         {['4H', '8H', 'DAILY'].map(lbl => (
-                          <div key={lbl} style={{ textAlign: 'center', fontSize: 10, color: '#475569', fontWeight: 700, letterSpacing: '0.06em', paddingBottom: 4 }}>{lbl}</div>
+                          <div key={lbl} style={{ textAlign: 'center', fontSize: 10, color: 'var(--c-faint)', fontWeight: 700, letterSpacing: '0.06em', paddingBottom: 4 }}>{lbl}</div>
                         ))}
                         {/* Futures row */}
                         <div style={{ fontSize: 10, color: '#818cf8', fontWeight: 700, display: 'flex', alignItems: 'center' }}>PERP</div>
                         {[m.h4, m.h8, m.daily].map((val, i) => (
-                          <div key={i} style={{ padding: '6px 4px', background: '#0a0a0f', borderRadius: 6, border: '1px solid #6366f122', textAlign: 'center' }}>
+                          <div key={i} style={{ padding: '6px 4px', background: 'var(--c-inner)', borderRadius: 6, border: '1px solid #6366f122', textAlign: 'center' }}>
                             <div style={{ fontSize: 14, fontWeight: 800, color: '#818cf8' }}>±{val.toFixed(2)}%</div>
                           </div>
                         ))}
@@ -1345,9 +1598,9 @@ export default function Home() {
                           {[sm.h4, sm.h8, sm.daily].map((val, i) => {
                             const diff = val - [m.h4, m.h8, m.daily][i];
                             return (
-                              <div key={i} style={{ padding: '6px 4px', background: '#0a0a0f', borderRadius: 6, border: '1px solid #f59e0b22', textAlign: 'center' }}>
+                              <div key={i} style={{ padding: '6px 4px', background: 'var(--c-inner)', borderRadius: 6, border: '1px solid #f59e0b22', textAlign: 'center' }}>
                                 <div style={{ fontSize: 14, fontWeight: 800, color: '#fbbf24' }}>±{val.toFixed(2)}%</div>
-                                <div style={{ fontSize: 9, color: Math.abs(diff) < 0.05 ? '#475569' : diff > 0 ? '#f97316' : '#22c55e', marginTop: 1 }}>
+                                <div style={{ fontSize: 9, color: Math.abs(diff) < 0.05 ? 'var(--c-faint)' : diff > 0 ? '#f97316' : '#22c55e', marginTop: 1 }}>
                                   {diff >= 0 ? '+' : ''}{diff.toFixed(2)}%
                                 </div>
                               </div>
@@ -1357,17 +1610,17 @@ export default function Home() {
                       </div>
 
                       {/* TP reachability cards */}
-                      <div style={{ fontSize: 11, color: '#475569', fontWeight: 700, letterSpacing: '0.06em', marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, color: 'var(--c-faint)', fontWeight: 700, letterSpacing: '0.06em', marginBottom: 10 }}>
                         TP REACHABILITY
                       </div>
 
                       {/* Scale reference bar */}
                       <div style={{ position: 'relative', height: 24, marginBottom: 18 }}>
-                        <div style={{ position: 'absolute', inset: '10px 0 0 0', background: '#1e1e2e', borderRadius: 4 }} />
+                        <div style={{ position: 'absolute', inset: '10px 0 0 0', background: 'var(--c-border)', borderRadius: 4 }} />
                         {[
-                          { val: m.h4,    label: `4H ${m.h4.toFixed(2)}%`,       color: '#475569' },
-                          { val: m.h8,    label: `8H ${m.h8.toFixed(2)}%`,       color: '#64748b' },
-                          { val: m.daily, label: `Day ${m.daily.toFixed(2)}%`,   color: '#94a3b8' },
+                          { val: m.h4,    label: `4H ${m.h4.toFixed(2)}%`,       color: 'var(--c-faint)' },
+                          { val: m.h8,    label: `8H ${m.h8.toFixed(2)}%`,       color: 'var(--c-dim)' },
+                          { val: m.daily, label: `Day ${m.daily.toFixed(2)}%`,   color: 'var(--c-muted)' },
                         ].map(({ val, label, color }) => (
                           <div key={label} style={{ position: 'absolute', left: `${(val / maxBar) * 100}%`, top: 0, bottom: 0 }}>
                             <div style={{ position: 'absolute', top: 10, bottom: 0, width: 2, background: color, borderRadius: 1 }} />
@@ -1388,13 +1641,13 @@ export default function Home() {
                           const fmt2 = (x: number) => x < 1 ? x.toFixed(6) : x < 100 ? x.toFixed(4) : x.toFixed(2);
 
                           return (
-                            <div key={label} style={{ padding: 12, background: '#0a0a0f', borderRadius: 9, border: `1px solid ${v.color}33`, borderLeft: `4px solid ${v.color}` }}>
+                            <div key={label} style={{ padding: 12, background: 'var(--c-inner)', borderRadius: 9, border: `1px solid ${v.color}33`, borderLeft: `4px solid ${v.color}` }}>
                               {/* Row 1: label + price + pct + P&L + verdict */}
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                                 <div>
                                   <span style={{ fontWeight: 800, fontSize: 13, color: v.color }}>{label}</span>
-                                  <span style={{ marginLeft: 6, fontSize: 10, color: '#475569' }}>{split} exit</span>
-                                  <div style={{ marginTop: 3, fontSize: 13, color: '#e2e8f0', fontWeight: 700 }}>
+                                  <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--c-faint)' }}>{split} exit</span>
+                                  <div style={{ marginTop: 3, fontSize: 13, color: 'var(--c-text)', fontWeight: 700 }}>
                                     ${fmt2(price)}
                                     <span style={{ marginLeft: 8, fontSize: 11, color: v.color }}>+{pct.toFixed(2)}%</span>
                                     {dollarPnl !== null && (
@@ -1406,7 +1659,7 @@ export default function Home() {
                                   <div style={{ padding: '3px 10px', background: v.color + '22', border: `1px solid ${v.color}44`, borderRadius: 20, fontSize: 11, color: v.color, fontWeight: 700, whiteSpace: 'nowrap' }}>
                                     {v.text}
                                   </div>
-                                  <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>{sessionsOf(ratioDay)}</div>
+                                  <div style={{ fontSize: 10, color: 'var(--c-faint)', marginTop: 4 }}>{sessionsOf(ratioDay)}</div>
                                 </div>
                               </div>
 
@@ -1414,19 +1667,19 @@ export default function Home() {
                               <div style={{ position: 'relative', height: 14, background: '#1a1a28', borderRadius: 7, overflow: 'hidden', marginBottom: 8 }}>
                                 <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${barW}%`, background: `linear-gradient(90deg, ${v.color}88, ${v.color}cc)`, borderRadius: 7 }} />
                                 {[m.h4, m.h8, m.daily].map((ref, i) => (
-                                  <div key={i} style={{ position: 'absolute', left: `${(ref / maxBar) * 100}%`, top: 0, bottom: 0, width: 1.5, background: ['#334155','#475569','#64748b'][i] }} />
+                                  <div key={i} style={{ position: 'absolute', left: `${(ref / maxBar) * 100}%`, top: 0, bottom: 0, width: 1.5, background: ['var(--c-faintest)','var(--c-faint)','var(--c-dim)'][i] }} />
                                 ))}
                               </div>
 
                               {/* Row 3: multiples */}
                               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 11 }}>
-                                <span><span style={{ color: '#475569' }}>vs 4H </span><span style={{ color: ratio4h <= 1 ? '#22c55e' : '#eab308', fontWeight: 700 }}>{ratio4h.toFixed(1)}×</span></span>
-                                <span><span style={{ color: '#475569' }}>vs 8H </span><span style={{ color: ratio8h <= 1 ? '#22c55e' : '#eab308', fontWeight: 700 }}>{ratio8h.toFixed(1)}×</span></span>
-                                <span><span style={{ color: '#475569' }}>vs Day </span><span style={{ color: v.color, fontWeight: 700 }}>{ratioDay.toFixed(2)}×</span></span>
+                                <span><span style={{ color: 'var(--c-faint)' }}>vs 4H </span><span style={{ color: ratio4h <= 1 ? '#22c55e' : '#eab308', fontWeight: 700 }}>{ratio4h.toFixed(1)}×</span></span>
+                                <span><span style={{ color: 'var(--c-faint)' }}>vs 8H </span><span style={{ color: ratio8h <= 1 ? '#22c55e' : '#eab308', fontWeight: 700 }}>{ratio8h.toFixed(1)}×</span></span>
+                                <span><span style={{ color: 'var(--c-faint)' }}>vs Day </span><span style={{ color: v.color, fontWeight: 700 }}>{ratioDay.toFixed(2)}×</span></span>
                                 {spotRatio !== null && (
-                                  <span><span style={{ color: '#475569' }}>vs Spot Day </span><span style={{ color: '#fbbf24', fontWeight: 700 }}>{spotRatio.toFixed(2)}×</span></span>
+                                  <span><span style={{ color: 'var(--c-faint)' }}>vs Spot Day </span><span style={{ color: '#fbbf24', fontWeight: 700 }}>{spotRatio.toFixed(2)}×</span></span>
                                 )}
-                                <span style={{ marginLeft: 'auto', color: '#334155', fontWeight: 600 }}>≈ {sessionsOf(ratioDay)}</span>
+                                <span style={{ marginLeft: 'auto', color: 'var(--c-faintest)', fontWeight: 600 }}>≈ {sessionsOf(ratioDay)}</span>
                               </div>
                             </div>
                           );
@@ -1450,23 +1703,23 @@ export default function Home() {
                     {/* Sizing row */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 8 }}>
                       <div>
-                        <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 4 }}>Risk % of balance</label>
+                        <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 4 }}>Risk % of balance</label>
                         <input type="number" min={0.1} max={10} step={0.1} value={riskPct}
                           onChange={e => { setRiskPct(parseFloat(e.target.value) || 1); setManualMarginUsdt(''); }}
-                          style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
+                          style={{ width: '100%', padding: '9px 10px', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
                       </div>
                       <div>
                         <label style={{ display: 'block', fontSize: 11, marginBottom: 4 }}>
-                          <span style={{ color: manualMarginUsdt !== '' ? '#6366f1' : '#64748b' }}>
+                          <span style={{ color: manualMarginUsdt !== '' ? '#6366f1' : 'var(--c-dim)' }}>
                             Margin USDT {manualMarginUsdt !== '' ? '(override active)' : '(optional override)'}
                           </span>
                         </label>
                         <input type="number" min={1} step={1} value={manualMarginUsdt}
                           onChange={e => setManualMarginUsdt(e.target.value === '' ? '' : parseFloat(e.target.value) || '')}
                           placeholder={`auto ≈ $${(accountSize * riskPct / 100).toFixed(0)} risk`}
-                          style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f',
-                            border: `1px solid ${manualMarginUsdt !== '' ? '#6366f155' : '#1e1e2e'}`,
-                            borderRadius: 6, color: manualMarginUsdt !== '' ? '#818cf8' : '#e2e8f0',
+                          style={{ width: '100%', padding: '9px 10px', background: 'var(--c-inner)',
+                            border: `1px solid ${manualMarginUsdt !== '' ? '#6366f155' : 'var(--c-border)'}`,
+                            borderRadius: 6, color: manualMarginUsdt !== '' ? '#818cf8' : 'var(--c-text)',
                             outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
                       </div>
                     </div>
@@ -1491,21 +1744,21 @@ export default function Home() {
                       }
                       const fmtP = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
                       return (
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '8px 10px', background: '#0a0a0f', borderRadius: 6, marginBottom: 10, fontSize: 11 }}>
-                          <span style={{ color: '#475569' }}>Qty <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{fmtP(qty)}</span></span>
-                          <span style={{ color: '#334155' }}>·</span>
-                          <span style={{ color: '#475569' }}>Notional <span style={{ color: '#e2e8f0', fontWeight: 700 }}>${notional.toFixed(0)}</span></span>
-                          <span style={{ color: '#334155' }}>·</span>
-                          <span style={{ color: '#475569' }}>Margin <span style={{ color: '#818cf8', fontWeight: 700 }}>${margin.toFixed(2)}</span></span>
-                          <span style={{ color: '#334155' }}>·</span>
-                          <span style={{ color: '#475569' }}>Risk at SL <span style={{ color: '#ef4444', fontWeight: 700 }}>${riskDollars.toFixed(2)}</span></span>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '8px 10px', background: 'var(--c-inner)', borderRadius: 6, marginBottom: 10, fontSize: 11 }}>
+                          <span style={{ color: 'var(--c-faint)' }}>Qty <span style={{ color: 'var(--c-text)', fontWeight: 700 }}>{fmtP(qty)}</span></span>
+                          <span style={{ color: 'var(--c-faintest)' }}>·</span>
+                          <span style={{ color: 'var(--c-faint)' }}>Notional <span style={{ color: 'var(--c-text)', fontWeight: 700 }}>${notional.toFixed(0)}</span></span>
+                          <span style={{ color: 'var(--c-faintest)' }}>·</span>
+                          <span style={{ color: 'var(--c-faint)' }}>Margin <span style={{ color: '#818cf8', fontWeight: 700 }}>${margin.toFixed(2)}</span></span>
+                          <span style={{ color: 'var(--c-faintest)' }}>·</span>
+                          <span style={{ color: 'var(--c-faint)' }}>Risk at SL <span style={{ color: '#ef4444', fontWeight: 700 }}>${riskDollars.toFixed(2)}</span></span>
                         </div>
                       );
                     })()}
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
                       <div>
-                        <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 4 }}>
+                        <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 4 }}>
                           Leverage
                           <span style={{ color: '#818cf8', marginLeft: 6 }}>engine rec: {result.masterSignal.leverage}×</span>
                         </label>
@@ -1513,9 +1766,9 @@ export default function Home() {
                           value={userLeverage}
                           onChange={e => setUserLeverage(parseInt(e.target.value) || 1)}
                           placeholder={String(result.masterSignal.leverage)}
-                          style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f',
+                          style={{ width: '100%', padding: '9px 10px', background: 'var(--c-inner)',
                             border: '1px solid #6366f144',
-                            borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
+                            borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 14, boxSizing: 'border-box' }} />
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
                         {manualMarginUsdt !== '' && (
@@ -1529,17 +1782,17 @@ export default function Home() {
 
                     {/* Order type + force */}
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-                      <div style={{ display: 'flex', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, overflow: 'hidden' }}>
+                      <div style={{ display: 'flex', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, overflow: 'hidden' }}>
                         {(['Limit', 'Market'] as const).map(t => (
                           <button key={t} onClick={() => setOrderType(t)} style={{
                             padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
                             background: orderType === t ? '#6366f133' : 'transparent',
-                            color: orderType === t ? '#818cf8' : '#475569',
+                            color: orderType === t ? '#818cf8' : 'var(--c-faint)',
                           }}>{t}</button>
                         ))}
                       </div>
                       {orderType === 'Limit' && <span style={{ fontSize: 11, color: '#22c55e' }}>saves ~0.035% fees</span>}
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginLeft: 'auto', fontSize: 12, color: '#64748b' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginLeft: 'auto', fontSize: 12, color: 'var(--c-dim)' }}>
                         <input type="checkbox" checked={forceTrade} onChange={e => setForceTrade(e.target.checked)} style={{ accentColor: '#6366f1' }} />
                         Force (override funding check)
                       </label>
@@ -1551,7 +1804,7 @@ export default function Home() {
                       color: liveMode ? '#ef4444' : '#22c55e',
                     }}>
                       {liveMode ? '⚡ LIVE — real order fires on Bybit' : '📄 PAPER — simulated, no real money'}
-                      {!liveMode && <span style={{ color: '#334155', marginLeft: 6 }}>Switch in Settings tab</span>}
+                      {!liveMode && <span style={{ color: 'var(--c-faintest)', marginLeft: 6 }}>Switch in Settings tab</span>}
                     </div>
 
                     {/* BIG BUTTON */}
@@ -1559,10 +1812,10 @@ export default function Home() {
                       width: '100%', padding: '14px 0', border: 'none', borderRadius: 8,
                       fontWeight: 800, fontSize: 16, letterSpacing: '0.5px',
                       cursor: tradeLoading ? 'not-allowed' : 'pointer',
-                      background: tradeLoading ? '#1e1e2e'
+                      background: tradeLoading ? 'var(--c-border)'
                         : result.direction === 'LONG' ? 'linear-gradient(135deg, #16a34a, #15803d)'
                         : 'linear-gradient(135deg, #dc2626, #b91c1c)',
-                      color: tradeLoading ? '#475569' : '#fff',
+                      color: tradeLoading ? 'var(--c-faint)' : '#fff',
                       boxShadow: tradeLoading ? 'none' : `0 4px 20px ${result.direction === 'LONG' ? '#16a34a44' : '#dc262644'}`,
                     }}>
                       {tradeLoading ? 'Placing order…'
@@ -1582,19 +1835,19 @@ export default function Home() {
                       color: tradeResult.error ? '#ef4444' : tradeResult.rejected ? '#eab308' : '#22c55e' }}>
                       {tradeResult.error ? '✗ Error' : tradeResult.rejected ? '⚠ Rejected' : tradeResult.paper ? '📄 Paper Trade Simulated' : '✓ Order Placed'}
                     </div>
-                    {tradeResult.message && <div style={{ color: '#cbd5e1', fontSize: 13, marginBottom: 6 }}>{tradeResult.message}</div>}
+                    {tradeResult.message && <div style={{ color: 'var(--c-subtle)', fontSize: 13, marginBottom: 6 }}>{tradeResult.message}</div>}
                     {tradeResult.error && <div style={{ color: '#ef4444', fontSize: 13 }}>{tradeResult.error}</div>}
                     {tradeResult.leverageWarning && <div style={{ color: '#eab308', fontSize: 12, marginBottom: 6 }}>{tradeResult.leverageWarning}</div>}
                     {(tradeResult.paper || tradeResult.success) && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12, color: '#94a3b8' }}>
-                        {tradeResult.orderId && <div>Order ID: <span style={{ color: '#e2e8f0' }}>{tradeResult.orderId}</span></div>}
-                        {tradeResult.qty !== undefined && <div>Qty: <span style={{ color: '#e2e8f0' }}>{tradeResult.qty}</span></div>}
-                        {tradeResult.balance && <div>Balance: <span style={{ color: '#e2e8f0' }}>${tradeResult.balance}</span></div>}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12, color: 'var(--c-muted)' }}>
+                        {tradeResult.orderId && <div>Order ID: <span style={{ color: 'var(--c-text)' }}>{tradeResult.orderId}</span></div>}
+                        {tradeResult.qty !== undefined && <div>Qty: <span style={{ color: 'var(--c-text)' }}>{tradeResult.qty}</span></div>}
+                        {tradeResult.balance && <div>Balance: <span style={{ color: 'var(--c-text)' }}>${tradeResult.balance}</span></div>}
                         {tradeResult.riskAmt && <div>Risk amt: <span style={{ color: '#ef4444' }}>${tradeResult.riskAmt}</span></div>}
                         {tradeResult.feeEstimate && <div>Fees: <span style={{ color: '#eab308' }}>${tradeResult.feeEstimate.totalFee}</span>
-                          {tradeResult.feeEstimate.note && <span style={{ color: '#334155' }}> · {tradeResult.feeEstimate.note}</span>}</div>}
+                          {tradeResult.feeEstimate.note && <span style={{ color: 'var(--c-faintest)' }}> · {tradeResult.feeEstimate.note}</span>}</div>}
                         {tradeResult.simulated && (
-                          <div style={{ marginTop: 4, color: '#475569' }}>
+                          <div style={{ marginTop: 4, color: 'var(--c-faint)' }}>
                             {tradeResult.simulated.symbol} {tradeResult.simulated.direction} @ ${tradeResult.simulated.entry} · {tradeResult.simulated.leverage}× · {tradeResult.simulated.riskPct}% risk
                           </div>
                         )}
@@ -1613,24 +1866,24 @@ export default function Home() {
                 )}
 
                 {/* Verdict */}
-                <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13, color: '#94a3b8' }}>VERDICT</div>
-                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.8, color: '#cbd5e1', margin: 0 }}>
+                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13, color: 'var(--c-muted)' }}>VERDICT</div>
+                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.8, color: 'var(--c-subtle)', margin: 0 }}>
                     {result.verdict}
                   </pre>
                 </div>
 
                 {/* Raw signal toggle */}
                 <button onClick={() => setShowRaw(v => !v)} style={{
-                  padding: '9px 0', background: 'none', border: '1px solid #1e1e2e',
-                  borderRadius: 8, color: '#475569', cursor: 'pointer', fontSize: 13,
+                  padding: '9px 0', background: 'none', border: '1px solid var(--c-border)',
+                  borderRadius: 8, color: 'var(--c-faint)', cursor: 'pointer', fontSize: 13,
                 }}>
                   {showRaw ? '▲ Hide' : '▼ Show'} raw signal text
                 </button>
 
                 {showRaw && (
-                  <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-                    <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, lineHeight: 1.7, color: '#64748b', margin: 0 }}>
+                  <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                    <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, lineHeight: 1.7, color: 'var(--c-dim)', margin: 0 }}>
                       {result.masterSignal.signalText}
                     </pre>
                   </div>
@@ -1647,7 +1900,7 @@ export default function Home() {
         {tab === 'trades' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {trades.length === 0 ? (
-              <div style={{ padding: 32, textAlign: 'center', color: '#475569', background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--c-faint)', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
                 <div style={{ fontSize: 32, marginBottom: 8 }}>📒</div>
                 <div style={{ fontWeight: 700, marginBottom: 6 }}>No trades logged yet</div>
                 <div style={{ fontSize: 13 }}>Enter a trade from the Scanner tab and it will appear here.</div>
@@ -1668,9 +1921,9 @@ export default function Home() {
                         { label: 'Win rate', value: closed.length ? `${Math.round(wins/closed.length*100)}%` : '—', color: '#22c55e' },
                         { label: 'Net P&L', value: `$${totalPnl.toFixed(0)}`, color: totalPnl >= 0 ? '#22c55e' : '#ef4444' },
                       ].map(({ label, value, color }) => (
-                        <div key={label} style={{ padding: '10px 12px', background: '#111118', border: '1px solid #1e1e2e', borderRadius: 8, textAlign: 'center' }}>
-                          <div style={{ color: '#475569', fontSize: 11 }}>{label}</div>
-                          <div style={{ color: color ?? '#e2e8f0', fontWeight: 700, fontSize: 16 }}>{value}</div>
+                        <div key={label} style={{ padding: '10px 12px', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 8, textAlign: 'center' }}>
+                          <div style={{ color: 'var(--c-faint)', fontSize: 11 }}>{label}</div>
+                          <div style={{ color: color ?? 'var(--c-text)', fontWeight: 700, fontSize: 16 }}>{value}</div>
                         </div>
                       ))}
                     </div>
@@ -1681,7 +1934,7 @@ export default function Home() {
                 {trades.some(t => t.status === 'open') && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: '#6366f1', letterSpacing: '0.08em' }}>OPEN POSITIONS</span>
-                    <span style={{ fontSize: 10, color: liveRefreshing ? '#22c55e' : '#334155' }}>
+                    <span style={{ fontSize: 10, color: liveRefreshing ? '#22c55e' : 'var(--c-faintest)' }}>
                       {liveRefreshing ? '● live' : '○ 8s refresh'}
                     </span>
                   </div>
@@ -1695,7 +1948,7 @@ export default function Home() {
                 {trades.map((t, tIdx) => {
                   const accentColor = CARD_ACCENT[tIdx % CARD_ACCENT.length];
                   const dirColor = t.direction === 'LONG' ? '#22c55e' : '#ef4444';
-                  const statusColor: Record<string, string> = { open: '#6366f1', tp1: '#22c55e', tp2: '#22c55e', tp3: '#22c55e', sl: '#ef4444', manual: '#94a3b8' };
+                  const statusColor: Record<string, string> = { open: '#6366f1', tp1: '#22c55e', tp2: '#22c55e', tp3: '#22c55e', sl: '#ef4444', manual: 'var(--c-muted)' };
                   const isOpen = t.status === 'open';
 
                   // Live P&L calculations
@@ -1710,7 +1963,7 @@ export default function Home() {
                   const unrealizedPct = currentPrice !== null
                     ? ((currentPrice - t.entry) / t.entry * 100 * t.leverage) * (t.direction === 'LONG' ? 1 : -1)
                     : null;
-                  const pnlColor = unrealizedDollar === null ? '#475569' : unrealizedDollar >= 0 ? '#22c55e' : '#ef4444';
+                  const pnlColor = unrealizedDollar === null ? 'var(--c-faint)' : unrealizedDollar >= 0 ? '#22c55e' : '#ef4444';
 
                   // Breakeven price: entry ± round-trip fees (taker in 0.055% + maker out 0.020%)
                   const FEE_BE = 0.00075;
@@ -1738,7 +1991,7 @@ export default function Home() {
 
                   return (
                     <div key={t.id} style={{
-                      padding: 12, background: '#111118',
+                      padding: 12, background: 'var(--c-card)',
                       border: `1px solid ${accentColor}44`,
                       borderLeft: `4px solid ${accentColor}`,
                       borderRadius: 10,
@@ -1752,7 +2005,7 @@ export default function Home() {
                           <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700, background: `${dirColor}22`, color: dirColor }}>
                             {t.direction === 'LONG' ? '▲' : '▼'} {t.direction}
                           </span>
-                          <span style={{ marginLeft: 6, padding: '2px 8px', borderRadius: 4, fontSize: 11, background: '#1e1e2e', color: '#64748b' }}>
+                          <span style={{ marginLeft: 6, padding: '2px 8px', borderRadius: 4, fontSize: 11, background: 'var(--c-border)', color: 'var(--c-dim)' }}>
                             {t.mode.toUpperCase()} · {t.leverage}× · {t.bestSetup}
                           </span>
                         </div>
@@ -1760,7 +2013,7 @@ export default function Home() {
                           <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700, background: `${statusColor[t.status]}22`, color: statusColor[t.status] }}>
                             {t.status.toUpperCase()}
                           </span>
-                          <button onClick={() => deleteTrade(t.id)} style={{ background: 'none', border: 'none', color: '#334155', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
+                          <button onClick={() => deleteTrade(t.id)} style={{ background: 'none', border: 'none', color: 'var(--c-faintest)', cursor: 'pointer', fontSize: 16, padding: '0 4px' }}>✕</button>
                         </div>
                       </div>
 
@@ -1770,17 +2023,17 @@ export default function Home() {
                           {/* 2×2 stats grid */}
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7, marginBottom: 10 }}>
                             {/* Live price */}
-                            <div style={{ padding: '9px 10px', background: '#0a0a0f', borderRadius: 8 }}>
-                              <div style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>
-                                LIVE PRICE {secsAgo !== null && <span style={{ color: secsAgo < 15 ? '#22c55e' : '#475569' }}>{secsAgo}s</span>}
+                            <div style={{ padding: '9px 10px', background: 'var(--c-inner)', borderRadius: 8 }}>
+                              <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 2 }}>
+                                LIVE PRICE {secsAgo !== null && <span style={{ color: secsAgo < 15 ? '#22c55e' : 'var(--c-faint)' }}>{secsAgo}s</span>}
                               </div>
-                              <div style={{ fontSize: 15, fontWeight: 800, color: '#e2e8f0' }}>
+                              <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--c-text)' }}>
                                 {currentPrice !== null ? `$${currentPrice.toFixed(currentPrice < 1 ? 6 : currentPrice < 100 ? 4 : 2)}` : '—'}
                               </div>
                             </div>
                             {/* Unrealized P&L */}
-                            <div style={{ padding: '9px 10px', background: unrealizedDollar !== null ? `${pnlColor}11` : '#0a0a0f', borderRadius: 8, border: `1px solid ${unrealizedDollar !== null ? `${pnlColor}33` : 'transparent'}` }}>
-                              <div style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>UNREALIZED P&L</div>
+                            <div style={{ padding: '9px 10px', background: unrealizedDollar !== null ? `${pnlColor}11` : 'var(--c-inner)', borderRadius: 8, border: `1px solid ${unrealizedDollar !== null ? `${pnlColor}33` : 'transparent'}` }}>
+                              <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 2 }}>UNREALIZED P&L</div>
                               <div style={{ fontSize: 15, fontWeight: 800, color: pnlColor }}>
                                 {unrealizedDollar !== null ? `${unrealizedDollar >= 0 ? '+' : ''}$${unrealizedDollar.toFixed(2)}` : '—'}
                               </div>
@@ -1791,17 +2044,17 @@ export default function Home() {
                               )}
                             </div>
                             {/* R Multiple */}
-                            <div style={{ padding: '9px 10px', background: '#0a0a0f', borderRadius: 8 }}>
-                              <div style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>R MULTIPLE</div>
-                              <div style={{ fontSize: 15, fontWeight: 800, color: unrealizedR !== null ? (unrealizedR >= 0 ? '#22c55e' : '#ef4444') : '#475569' }}>
+                            <div style={{ padding: '9px 10px', background: 'var(--c-inner)', borderRadius: 8 }}>
+                              <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 2 }}>R MULTIPLE</div>
+                              <div style={{ fontSize: 15, fontWeight: 800, color: unrealizedR !== null ? (unrealizedR >= 0 ? '#22c55e' : '#ef4444') : 'var(--c-faint)' }}>
                                 {unrealizedR !== null ? `${unrealizedR >= 0 ? '+' : ''}${unrealizedR.toFixed(2)}R` : '—'}
                               </div>
-                              <div style={{ fontSize: 9, color: '#334155' }}>max {t.netRR.toFixed(1)}R</div>
+                              <div style={{ fontSize: 9, color: 'var(--c-faintest)' }}>max {t.netRR.toFixed(1)}R</div>
                             </div>
                             {/* Breakeven */}
-                            <div style={{ padding: '9px 10px', background: inProfitZone ? '#22c55e11' : '#0a0a0f', borderRadius: 8, border: `1px solid ${inProfitZone ? '#22c55e33' : '#1e1e2e'}` }}>
-                              <div style={{ fontSize: 9, color: '#475569', marginBottom: 2 }}>BREAKEVEN</div>
-                              <div style={{ fontSize: 13, fontWeight: 800, color: inProfitZone ? '#22c55e' : '#94a3b8' }}>
+                            <div style={{ padding: '9px 10px', background: inProfitZone ? '#22c55e11' : 'var(--c-inner)', borderRadius: 8, border: `1px solid ${inProfitZone ? '#22c55e33' : 'var(--c-border)'}` }}>
+                              <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 2 }}>BREAKEVEN</div>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: inProfitZone ? '#22c55e' : 'var(--c-muted)' }}>
                                 ${bePrice.toFixed(bePrice < 1 ? 6 : bePrice < 100 ? 4 : 2)}
                               </div>
                               <div style={{ fontSize: 9, marginTop: 2 }}>
@@ -1809,7 +2062,7 @@ export default function Home() {
                                   ? inProfitZone
                                     ? <span style={{ color: '#22c55e' }}>✓ {(beDistFromCurrent * 100).toFixed(3)}% past BE</span>
                                     : <span style={{ color: '#eab308' }}>{(Math.abs(beDistFromCurrent) * 100).toFixed(3)}% to BE</span>
-                                  : <span style={{ color: '#334155' }}>fees: 0.075%</span>}
+                                  : <span style={{ color: 'var(--c-faintest)' }}>fees: 0.075%</span>}
                               </div>
                             </div>
                           </div>
@@ -1819,7 +2072,7 @@ export default function Home() {
                             {/* Labels above bar */}
                             <div style={{ position: 'relative', height: 18, marginBottom: 3 }}>
                               <span style={{ position: 'absolute', left: 0, fontSize: 10, color: '#ef4444', fontWeight: 700 }}>SL</span>
-                              <span style={{ position: 'absolute', left: `${markerEntry}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>ENTRY</span>
+                              <span style={{ position: 'absolute', left: `${markerEntry}%`, transform: 'translateX(-50%)', fontSize: 10, color: 'var(--c-muted)', fontWeight: 700 }}>ENTRY</span>
                               <span style={{ position: 'absolute', left: `${markerBE}%`, transform: 'translateX(-50%)', fontSize: 9, color: inProfitZone ? '#22c55e' : '#eab308', fontWeight: 700 }}>BE</span>
                               <span style={{ position: 'absolute', left: `${markerTp1}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#4ade80', fontWeight: 700 }}>TP1</span>
                               <span style={{ position: 'absolute', left: `${markerTp2}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#22c55e', fontWeight: 700 }}>TP2</span>
@@ -1827,7 +2080,7 @@ export default function Home() {
                             </div>
 
                             {/* Bar */}
-                            <div style={{ position: 'relative', height: 44, borderRadius: 8, overflow: 'hidden', background: '#080810' }}>
+                            <div style={{ position: 'relative', height: 44, borderRadius: 8, overflow: 'hidden', background: 'var(--c-bg)' }}>
                               {/* Red zone: SL → entry */}
                               <div style={{ position: 'absolute', left: 0, right: `${100 - markerEntry}%`, top: 0, bottom: 0, background: 'linear-gradient(90deg, #ef444440 0%, #ef444414 100%)' }} />
                               {/* Green zone: entry → TP3 */}
@@ -1865,7 +2118,7 @@ export default function Home() {
                                   width: 16, height: 16, borderRadius: '50%',
                                   background: pnlColor,
                                   boxShadow: `0 0 14px ${pnlColor}, 0 0 5px ${pnlColor}`,
-                                  border: `2.5px solid #0a0a0f`,
+                                  border: `2.5px solid var(--c-inner)`,
                                   transition: 'left 0.6s ease',
                                   zIndex: 10,
                                 }} />
@@ -1878,7 +2131,7 @@ export default function Home() {
                                 <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 700 }}>
                                   ↙ SL {(Math.abs(currentPrice - t.stopLoss) / currentPrice * 100).toFixed(2)}% away
                                 </span>
-                                <span style={{ fontSize: 10, color: '#475569' }}>
+                                <span style={{ fontSize: 10, color: 'var(--c-faint)' }}>
                                   ${currentPrice.toFixed(currentPrice < 1 ? 6 : currentPrice < 100 ? 4 : 2)}
                                 </span>
                                 <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 700 }}>
@@ -1902,40 +2155,40 @@ export default function Home() {
                           <>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 6, fontSize: 12 }}>
                               {[
-                                { label: 'Entry',    value: t.entry,    color: '#e2e8f0' },
+                                { label: 'Entry',    value: t.entry,    color: 'var(--c-text)' },
                                 { label: 'Stop Loss', value: t.stopLoss, color: '#ef4444' },
                                 { label: 'TP1',      value: t.tp1,      color: '#22c55e' },
                               ].map(({ label, value, color }) => (
-                                <div key={label} style={{ padding: '6px 8px', background: '#0a0a0f', borderRadius: 6 }}>
-                                  <div style={{ color: '#475569', fontSize: 10 }}>{label}</div>
+                                <div key={label} style={{ padding: '6px 8px', background: 'var(--c-inner)', borderRadius: 6 }}>
+                                  <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>{label}</div>
                                   <div style={{ color, fontWeight: 600 }}>${fmt(value)}</div>
                                 </div>
                               ))}
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, marginBottom: 10, fontSize: 12 }}>
-                              <div style={{ padding: '6px 8px', background: '#0a0a0f', borderRadius: 6 }}>
-                                <div style={{ color: '#475569', fontSize: 10 }}>Position</div>
-                                <div style={{ color: '#e2e8f0', fontWeight: 600 }}>
+                              <div style={{ padding: '6px 8px', background: 'var(--c-inner)', borderRadius: 6 }}>
+                                <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>Position</div>
+                                <div style={{ color: 'var(--c-text)', fontWeight: 600 }}>
                                   {t.qty ? `${t.qty.toFixed(3)} ${t.symbol.replace('1000','').replace('USDT','')}` : '—'}
                                 </div>
-                                <div style={{ color: '#475569', fontSize: 10 }}>${t.positionNotional ? t.positionNotional.toFixed(0) : '—'} notional</div>
+                                <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>${t.positionNotional ? t.positionNotional.toFixed(0) : '—'} notional</div>
                               </div>
-                              <div style={{ padding: '6px 8px', background: '#0a0a0f', borderRadius: 6 }}>
-                                <div style={{ color: '#475569', fontSize: 10 }}>Margin Used</div>
+                              <div style={{ padding: '6px 8px', background: 'var(--c-inner)', borderRadius: 6 }}>
+                                <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>Margin Used</div>
                                 <div style={{ color: '#818cf8', fontWeight: 600 }}>${t.marginUsed ? t.marginUsed.toFixed(2) : '—'}</div>
-                                <div style={{ color: '#475569', fontSize: 10 }}>{t.leverage}× leverage</div>
+                                <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>{t.leverage}× leverage</div>
                               </div>
                               <div style={{ padding: '6px 8px', background: '#ef444411', border: '1px solid #ef444422', borderRadius: 6 }}>
-                                <div style={{ color: '#475569', fontSize: 10 }}>Liquidation</div>
+                                <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>Liquidation</div>
                                 <div style={{ color: '#ef4444', fontWeight: 600 }}>${fmt(liqPrice)}</div>
-                                <div style={{ color: '#475569', fontSize: 10 }}>{(liqDist * 100).toFixed(1)}% from entry</div>
+                                <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>{(liqDist * 100).toFixed(1)}% from entry</div>
                               </div>
                             </div>
                           </>
                         );
                       })()}
 
-                      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: '#475569', marginBottom: isOpen ? 10 : 0, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--c-faint)', marginBottom: isOpen ? 10 : 0, flexWrap: 'wrap' }}>
                         <span>Score {t.score}/100</span>
                         <span>R:R {t.netRR.toFixed(2)}×</span>
                         <span>Risk {t.riskPct}%</span>
@@ -1967,8 +2220,8 @@ export default function Home() {
                             Stopped Out (${t.stopLoss.toFixed(3)})
                           </button>
                           <button onClick={() => updateTradeStatus(t.id, 'manual')} style={{
-                            padding: '5px 12px', background: '#1e1e2e', border: '1px solid #1e1e2e',
-                            borderRadius: 6, color: '#64748b', cursor: 'pointer', fontSize: 12,
+                            padding: '5px 12px', background: 'var(--c-border)', border: '1px solid var(--c-border)',
+                            borderRadius: 6, color: 'var(--c-dim)', cursor: 'pointer', fontSize: 12,
                           }}>
                             Manual Close
                           </button>
@@ -1983,8 +2236,8 @@ export default function Home() {
 
                 {/* Clear all */}
                 <button onClick={() => { if (confirm('Clear all trade history?')) saveTrades([]); }} style={{
-                  padding: '10px 0', background: 'none', border: '1px solid #1e1e2e',
-                  borderRadius: 8, color: '#334155', cursor: 'pointer', fontSize: 13,
+                  padding: '10px 0', background: 'none', border: '1px solid var(--c-border)',
+                  borderRadius: 8, color: 'var(--c-faintest)', cursor: 'pointer', fontSize: 13,
                 }}>
                   Clear all trades
                 </button>
@@ -1993,9 +2246,327 @@ export default function Home() {
           </div>
         )}
 
+        {/* ══════════════════ LOG TAB ══════════════════ */}
+        {tab === 'log' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+            {/* Sync status bar */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 8 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.06em' }}>SYNC</span>
+              <span style={{
+                fontSize: 11, fontWeight: 700,
+                color: syncStatus === 'ok' ? '#22c55e' : syncStatus === 'syncing' ? '#eab308' : syncStatus === 'error' ? '#ef4444' : 'var(--c-faint)',
+              }}>
+                {syncStatus === 'ok' ? '✓ Synced' : syncStatus === 'syncing' ? '⟳ Syncing…' : syncStatus === 'error' ? '✗ Sync error' : '○ Not synced'}
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--c-faintest)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                Key: {syncKey || '—'}
+              </span>
+              <button onClick={() => { try { navigator.clipboard.writeText(syncKey); } catch { /* ignore */ } }} style={{
+                padding: '3px 10px', borderRadius: 5, border: '1px solid var(--c-border)', background: 'var(--c-inner)',
+                color: 'var(--c-dim)', cursor: 'pointer', fontSize: 11,
+              }}>Copy</button>
+            </div>
+
+            {trades.length === 0 ? (
+              <div style={{ padding: 40, textAlign: 'center', color: 'var(--c-faint)', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
+                <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--c-text)' }}>No trades in log yet</div>
+                <div style={{ fontSize: 13 }}>Enter trades from the Scanner tab — full analysis and price tracking appear here.</div>
+              </div>
+            ) : trades.map(t => {
+              const fa = t.fullAnalysis;
+              const isOpen = t.status === 'open';
+              const dirColor = t.direction === 'LONG' ? '#22c55e' : '#ef4444';
+              const statusColors: Record<string, string> = { open: '#6366f1', tp1: '#22c55e', tp2: '#22c55e', tp3: '#22c55e', sl: '#ef4444', manual: 'var(--c-muted)' };
+              const statusColor = statusColors[t.status];
+              const fmtP = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
+              const pctFromEntry = (p: number) => ((p - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1)).toFixed(2);
+              const livePrice = livePrices[t.symbol]?.price ?? null;
+
+              // H/L range calculations
+              const high = t.highestPrice ?? t.entry;
+              const low  = t.lowestPrice  ?? t.entry;
+              const rangePct = high > low ? (high - low) / t.entry * 100 : 0;
+              const highPct  = (high - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1);
+              const lowPct   = (low  - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1);
+
+              return (
+                <div key={t.id} style={{ background: 'var(--c-card)', border: `1px solid var(--c-border)`, borderLeft: `4px solid ${dirColor}`, borderRadius: 10, overflow: 'hidden' }}>
+
+                  {/* ── Card header ─── */}
+                  <div style={{ padding: '12px 14px', borderBottom: `1px solid var(--c-border)`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 800, fontSize: 16, color: 'var(--c-text)' }}>{t.symbol}</span>
+                      <span style={{ padding: '2px 9px', borderRadius: 5, fontSize: 12, fontWeight: 700, background: `${dirColor}22`, color: dirColor }}>
+                        {t.direction === 'LONG' ? '▲ LONG' : '▼ SHORT'}
+                      </span>
+                      <span style={{ padding: '2px 9px', borderRadius: 5, fontSize: 11, fontWeight: 700, background: `${statusColor}22`, color: statusColor }}>
+                        {t.status.toUpperCase()}
+                      </span>
+                      <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>{t.leverage}× · {t.bestSetup} · {t.mode.toUpperCase()}</span>
+                    </div>
+                    <span style={{ fontSize: 11, color: 'var(--c-faintest)' }}>{t.timestamp} {t.timezone}</span>
+                  </div>
+
+                  <div style={{ padding: '14px 14px 0' }}>
+
+                    {/* ── Analysis snapshot ─── */}
+                    {fa && (
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.08em', marginBottom: 8 }}>SIGNAL ANALYSIS AT ENTRY</div>
+
+                        {/* Score row */}
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                          {[
+                            { l: 'Score',      v: `${fa.totalScore}/100`,                    c: fa.totalScore >= 80 ? '#22c55e' : fa.totalScore >= 60 ? '#eab308' : '#ef4444' },
+                            { l: 'Confidence', v: `${fa.confidence}%`,                       c: fa.confidence >= 70 ? '#22c55e' : fa.confidence >= 50 ? '#eab308' : '#ef4444' },
+                            { l: 'Alignment',  v: `${fa.alignmentScore}% ${fa.alignmentQuality}`, c: '#818cf8' },
+                          ].map(({ l, v, c }) => (
+                            <div key={l} style={{ padding: '6px 10px', background: 'var(--c-inner)', borderRadius: 6, border: '1px solid var(--c-border)' }}>
+                              <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 2 }}>{l}</div>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: c }}>{v}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* ICT signals grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 5, marginBottom: 8 }}>
+                          {[
+                            { l: 'BOS',   ok: fa.deep.hasBOS },
+                            { l: 'OB',    ok: fa.deep.hasOB },
+                            { l: 'FVG',   ok: fa.deep.hasFVG },
+                            { l: 'Sweep', ok: fa.deep.hasSweep },
+                            { l: 'ChoCH', ok: fa.deep.hasChoCH },
+                            { l: 'MACD↑', ok: fa.deep.macdBull },
+                            { l: 'MACD↓', ok: fa.deep.macdBear },
+                            { l: 'VWAP↑', ok: fa.deep.vwapAbove },
+                          ].map(({ l, ok }) => (
+                            <div key={l} style={{
+                              padding: '5px 6px', borderRadius: 5, textAlign: 'center', fontSize: 11, fontWeight: 700,
+                              background: ok ? '#22c55e18' : 'var(--c-inner)',
+                              color: ok ? '#22c55e' : 'var(--c-faintest)',
+                              border: `1px solid ${ok ? '#22c55e33' : 'var(--c-border)'}`,
+                            }}>{ok ? '✓' : '·'} {l}</div>
+                          ))}
+                        </div>
+
+                        {/* RSI + Vol + Wyckoff */}
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                          <span style={{ fontSize: 11, padding: '3px 8px', background: 'var(--c-inner)', borderRadius: 5, color: fa.deep.rsi > 70 ? '#ef4444' : fa.deep.rsi < 30 ? '#22c55e' : 'var(--c-muted)' }}>
+                            RSI {fa.deep.rsi?.toFixed(1)}
+                          </span>
+                          <span style={{ fontSize: 11, padding: '3px 8px', background: 'var(--c-inner)', borderRadius: 5, color: fa.deep.volRatio >= 1.2 ? '#22c55e' : fa.deep.volRatio < 0.8 ? '#ef4444' : 'var(--c-muted)' }}>
+                            Vol {fa.deep.volRatio?.toFixed(2)}×
+                          </span>
+                          <span style={{ fontSize: 11, padding: '3px 8px', background: '#6366f118', borderRadius: 5, color: '#818cf8' }}>
+                            {fa.deep.wyckoffPhase}
+                          </span>
+                        </div>
+
+                        {/* Avg ranges */}
+                        {fa.avgMoves && (
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                            {[
+                              { l: 'Avg 4H', v: `±${fa.avgMoves.h4.toFixed(2)}%` },
+                              { l: 'Avg 8H', v: `±${fa.avgMoves.h8.toFixed(2)}%` },
+                              { l: 'Avg Day', v: `±${fa.avgMoves.daily.toFixed(2)}%` },
+                            ].map(({ l, v }) => (
+                              <div key={l} style={{ padding: '4px 8px', background: '#6366f111', borderRadius: 5, border: '1px solid #6366f122' }}>
+                                <span style={{ fontSize: 10, color: 'var(--c-faint)' }}>{l} </span>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: '#818cf8' }}>{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Verdict snippet */}
+                        <div style={{ fontSize: 11, color: 'var(--c-dim)', lineHeight: 1.6, padding: '8px 10px', background: 'var(--c-inner)', borderRadius: 6, borderLeft: `3px solid ${dirColor}` }}>
+                          {fa.verdict?.slice(0, 280)}{(fa.verdict?.length ?? 0) > 280 ? '…' : ''}
+                        </div>
+                        {fa.leverageWarning && (
+                          <div style={{ marginTop: 6, fontSize: 11, color: '#eab308', padding: '5px 8px', background: '#eab30811', borderRadius: 5 }}>{fa.leverageWarning}</div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── Price levels ─── */}
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.08em', marginBottom: 8 }}>PRICE LEVELS</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                        {[
+                          { l: 'Stop Loss', v: t.stopLoss, c: '#ef4444', pct: pctFromEntry(t.stopLoss) },
+                          { l: 'Entry',     v: t.entry,    c: 'var(--c-muted)', pct: null },
+                          { l: 'TP1',       v: t.tp1,      c: '#22c55e', pct: pctFromEntry(t.tp1) },
+                          { l: 'TP2',       v: t.tp2,      c: '#22c55e', pct: pctFromEntry(t.tp2) },
+                          { l: 'TP3',       v: t.tp3,      c: '#16a34a', pct: pctFromEntry(t.tp3) },
+                          t.exitPrice
+                            ? { l: 'Exit', v: t.exitPrice, c: t.pnlDollars != null && t.pnlDollars >= 0 ? '#22c55e' : '#ef4444', pct: pctFromEntry(t.exitPrice) }
+                            : livePrice ? { l: 'Live', v: livePrice, c: '#818cf8', pct: pctFromEntry(livePrice) }
+                            : null,
+                        ].filter((x): x is { l: string; v: number; c: string; pct: string | null } => x !== null).map(({ l, v, c, pct }) => (
+                          <div key={l} style={{ padding: '7px 9px', background: 'var(--c-inner)', borderRadius: 6, border: '1px solid var(--c-border)' }}>
+                            <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 2 }}>{l}</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: c }}>${fmtP(v)}</div>
+                            {pct !== null && <div style={{ fontSize: 9, color: parseFloat(pct) >= 0 ? '#22c55e' : '#ef4444' }}>{parseFloat(pct) >= 0 ? '+' : ''}{pct}%</div>}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* P&L */}
+                      {t.pnlDollars != null && (
+                        <div style={{ marginTop: 8, padding: '8px 12px', background: t.pnlDollars >= 0 ? '#22c55e11' : '#ef444411', borderRadius: 6, border: `1px solid ${t.pnlDollars >= 0 ? '#22c55e33' : '#ef444433'}`, display: 'flex', gap: 16 }}>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: t.pnlDollars >= 0 ? '#22c55e' : '#ef4444' }}>
+                            {t.pnlDollars >= 0 ? '+' : ''}${t.pnlDollars.toFixed(2)} P&L
+                          </span>
+                          <span style={{ fontSize: 12, color: 'var(--c-faint)' }}>
+                            {(t.pnlDollars / (t.qty * t.entry) * 100).toFixed(2)}% on position
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* ── High / Low range since entry ─── */}
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.08em', marginBottom: 8 }}>
+                        PRICE RANGE SINCE ENTRY {isOpen && livePrice ? `· Live $${fmtP(livePrice)}` : ''}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 8 }}>
+                        <div style={{ padding: '8px 10px', background: '#22c55e11', borderRadius: 6, border: '1px solid #22c55e33' }}>
+                          <div style={{ fontSize: 9, color: '#22c55e', fontWeight: 700, marginBottom: 2 }}>HIGHEST {isOpen ? '(running)' : ''}</div>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: '#22c55e' }}>${fmtP(high)}</div>
+                          <div style={{ fontSize: 10, color: '#22c55e', opacity: 0.8 }}>{highPct >= 0 ? '+' : ''}{highPct.toFixed(2)}% from entry</div>
+                        </div>
+                        <div style={{ padding: '8px 10px', background: 'var(--c-inner)', borderRadius: 6, border: '1px solid var(--c-border)', textAlign: 'center' }}>
+                          <div style={{ fontSize: 9, color: 'var(--c-faint)', fontWeight: 700, marginBottom: 2 }}>ENTRY</div>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--c-muted)' }}>${fmtP(t.entry)}</div>
+                          <div style={{ fontSize: 10, color: 'var(--c-faintest)' }}>±{rangePct.toFixed(2)}% range</div>
+                        </div>
+                        <div style={{ padding: '8px 10px', background: '#ef444411', borderRadius: 6, border: '1px solid #ef444433' }}>
+                          <div style={{ fontSize: 9, color: '#ef4444', fontWeight: 700, marginBottom: 2 }}>LOWEST {isOpen ? '(running)' : ''}</div>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: '#ef4444' }}>${fmtP(low)}</div>
+                          <div style={{ fontSize: 10, color: '#ef4444', opacity: 0.8 }}>{lowPct >= 0 ? '+' : ''}{lowPct.toFixed(2)}% from entry</div>
+                        </div>
+                      </div>
+
+                      {/* Visual range bar */}
+                      {(() => {
+                        const barLow  = Math.min(low, t.stopLoss) * 0.999;
+                        const barHigh = Math.max(high, t.tp1)    * 1.001;
+                        const span = barHigh - barLow;
+                        const pos = (p: number) => Math.min(100, Math.max(0, (p - barLow) / span * 100));
+                        const markers = [
+                          { p: t.stopLoss, c: '#ef4444', lbl: 'SL' },
+                          { p: t.entry,    c: 'var(--c-muted)', lbl: 'EN' },
+                          { p: t.tp1,      c: '#4ade80', lbl: 'T1' },
+                          { p: t.tp2,      c: '#22c55e', lbl: 'T2' },
+                          { p: t.tp3,      c: '#16a34a', lbl: 'T3' },
+                          ...(livePrice != null ? [{ p: livePrice, c: '#818cf8', lbl: '●' }] : []),
+                        ];
+                        return (
+                          <div style={{ position: 'relative', height: 28, background: 'var(--c-inner)', borderRadius: 6, overflow: 'visible' }}>
+                            {/* Range band */}
+                            <div style={{ position: 'absolute', left: `${pos(low)}%`, right: `${100 - pos(high)}%`, top: 0, bottom: 0, background: '#22c55e18', borderRadius: 4 }} />
+                            {markers.map(({ p, c, lbl }) => (
+                              <div key={lbl} style={{ position: 'absolute', left: `${pos(p)}%`, top: 0, bottom: 0, width: 2, background: c, transform: 'translateX(-50%)' }}>
+                                <span style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', fontSize: 8, color: c, whiteSpace: 'nowrap', fontWeight: 700, marginBottom: 1 }}>{lbl}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* ── Hourly H/L table ─── */}
+                    {(t.hourlyCandles?.length ?? 0) > 0 && (
+                      <div style={{ marginBottom: 14 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.08em', marginBottom: 8 }}>
+                          HOURLY H/L ({t.hourlyCandles!.length} candles)
+                        </div>
+                        <div style={{ overflowX: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
+                                {['Hour (UTC)', 'Open', 'High', 'Low', 'Close', 'Δ Entry'].map(h => (
+                                  <th key={h} style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--c-dim)', fontWeight: 700, fontSize: 10, ...(h === 'Hour (UTC)' ? { textAlign: 'left' } : {}) }}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[...t.hourlyCandles!].reverse().slice(0, 24).map((c, i) => {
+                                const delta = (c.close - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1);
+                                const isGreen = c.close >= c.open;
+                                return (
+                                  <tr key={i} style={{ borderBottom: '1px solid var(--c-border)', background: i % 2 === 0 ? 'transparent' : 'var(--c-inner)' }}>
+                                    <td style={{ padding: '5px 8px', color: 'var(--c-faint)', fontFamily: 'monospace' }}>{c.hour.slice(11, 16)}</td>
+                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--c-muted)' }}>${fmtP(c.open)}</td>
+                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: '#22c55e', fontWeight: 700 }}>${fmtP(c.high)}</td>
+                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: '#ef4444', fontWeight: 700 }}>${fmtP(c.low)}</td>
+                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: isGreen ? '#22c55e' : '#ef4444', fontWeight: 600 }}>${fmtP(c.close)}</td>
+                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: delta >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>{delta >= 0 ? '+' : ''}{delta.toFixed(2)}%</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── Notes ─── */}
+                    <div style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.08em', marginBottom: 6 }}>TRADE NOTES</div>
+                      <textarea
+                        defaultValue={t.notes ?? ''}
+                        onBlur={e => updateTradeNotes(t.id, e.target.value)}
+                        placeholder="Add notes about this trade — entry rationale, what happened, lessons learned…"
+                        rows={3}
+                        style={{
+                          width: '100%', padding: '9px 10px', background: 'var(--c-inner)', border: '1px solid var(--c-border)',
+                          borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 12, lineHeight: 1.6,
+                          resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box',
+                        }}
+                      />
+                    </div>
+
+                  </div>{/* end padded body */}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* ══════════════════ SETTINGS TAB ══════════════════ */}
         {tab === 'settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+            {/* ── SYNC KEY ───────────────────────────────────── */}
+            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)' }}>🔑 SYNC KEY</span>
+                <span style={{ fontSize: 11, color: syncStatus === 'ok' ? '#22c55e' : syncStatus === 'error' ? '#ef4444' : syncStatus === 'syncing' ? '#eab308' : 'var(--c-dim)' }}>
+                  {syncStatus === 'ok' ? '✓ Synced' : syncStatus === 'error' ? '✗ Sync error' : syncStatus === 'syncing' ? '⟳ Syncing…' : '● Local only'}
+                </span>
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--c-dim)', margin: '0 0 10px', lineHeight: 1.5 }}>
+                Your trades sync across all devices that share this key. Copy it to another device to access the same trade log.
+              </p>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                <input
+                  readOnly
+                  value={syncKey}
+                  style={{ flex: 1, padding: '8px 10px', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 12, fontFamily: 'monospace' }}
+                />
+                <button
+                  onClick={() => { try { navigator.clipboard.writeText(syncKey); } catch { /* ignore */ } }}
+                  style={{ padding: '8px 14px', background: '#6366f122', border: '1px solid #6366f144', borderRadius: 6, color: '#818cf8', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+                >
+                  Copy
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--c-faintest)', marginBottom: 8 }}>To use on another device, paste your key below and tap Load:</div>
+              <SyncKeyInput onLoad={changeSyncKey} />
+            </div>
 
             {/* ── CONFIG STATUS ──────────────────────────────── */}
             {(() => {
@@ -2008,17 +2579,17 @@ export default function Home() {
               ];
               const warnings = checks.filter(c => !c.ok).length;
               return (
-                <div style={{ padding: 14, background: '#111118', border: `1px solid ${warnings > 0 ? '#eab30833' : '#1e2e1e'}`, borderRadius: 10 }}>
+                <div style={{ padding: 14, background: 'var(--c-card)', border: `1px solid ${warnings > 0 ? '#eab30833' : '#1e2e1e'}`, borderRadius: 10 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <span style={{ fontWeight: 700, fontSize: 13, color: '#94a3b8' }}>CONFIG STATUS</span>
+                    <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)' }}>CONFIG STATUS</span>
                     <span style={{ fontSize: 11, color: warnings > 0 ? '#eab308' : '#22c55e', fontWeight: 700 }}>
                       {warnings > 0 ? `${warnings} item${warnings > 1 ? 's' : ''} need attention` : '✓ All good'}
                     </span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                     {checks.map(c => (
-                      <div key={c.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', background: '#0a0a0f', borderRadius: 6 }}>
-                        <span style={{ fontSize: 12, color: '#64748b' }}>{c.label}</span>
+                      <div key={c.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', background: 'var(--c-inner)', borderRadius: 6 }}>
+                        <span style={{ fontSize: 12, color: 'var(--c-dim)' }}>{c.label}</span>
                         <span style={{ fontSize: 12, fontWeight: 600, color: c.ok ? '#22c55e' : '#eab308' }}>
                           {c.ok ? c.ok_text : `⚠ ${c.bad_text}`}
                         </span>
@@ -2030,22 +2601,22 @@ export default function Home() {
             })()}
 
             {/* ── 1. TRADING MODE ────────────────────────────── */}
-            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>1 · TRADING MODE</div>
+            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 12 }}>1 · TRADING MODE</div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                 {(['Paper', 'Live'] as const).map(mode => (
                   <button key={mode} onClick={() => setLiveMode(mode === 'Live')} style={{
                     flex: 1, padding: '13px 0', cursor: 'pointer', fontWeight: 800, fontSize: 14, borderRadius: 8,
                     background: (liveMode ? 'Live' : 'Paper') === mode
-                      ? mode === 'Live' ? '#dc2626' : '#16a34a' : '#0a0a0f',
-                    color: (liveMode ? 'Live' : 'Paper') === mode ? '#fff' : '#334155',
-                    border: `1px solid ${(liveMode ? 'Live' : 'Paper') === mode ? 'transparent' : '#1e1e2e'}`,
+                      ? mode === 'Live' ? '#dc2626' : '#16a34a' : 'var(--c-inner)',
+                    color: (liveMode ? 'Live' : 'Paper') === mode ? '#fff' : 'var(--c-faintest)',
+                    border: `1px solid ${(liveMode ? 'Live' : 'Paper') === mode ? 'transparent' : 'var(--c-border)'}`,
                   }}>
                     {mode === 'Live' ? '⚡ Live Trading' : '📄 Paper Mode'}
                   </button>
                 ))}
               </div>
-              <div style={{ fontSize: 12, color: liveMode ? '#ef4444' : '#475569', padding: '8px 12px', background: '#0a0a0f', borderRadius: 6, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 12, color: liveMode ? '#ef4444' : 'var(--c-faint)', padding: '8px 12px', background: 'var(--c-inner)', borderRadius: 6, lineHeight: 1.5 }}>
                 {liveMode
                   ? '⚠ LIVE MODE active — real orders fire on Bybit with real money. Confirm API keys and risk limits below before trading.'
                   : 'Paper mode simulates every trade — no real funds used. Master the system here before switching live.'}
@@ -2053,10 +2624,10 @@ export default function Home() {
             </div>
 
             {/* ── 1b. TIMEZONE ───────────────────────────────── */}
-            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 10 }}>1b · TIMEZONE</div>
-              <div style={{ marginBottom: 8, fontSize: 12, color: '#64748b' }}>
-                Used for trade timestamps and session times. Current time: <span style={{ color: '#e2e8f0' }}>
+            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 10 }}>1b · TIMEZONE</div>
+              <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--c-dim)' }}>
+                Used for trade timestamps and session times. Current time: <span style={{ color: 'var(--c-text)' }}>
                   {new Date().toLocaleTimeString('en', { timeZone: timezone, hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}
                 </span>
               </div>
@@ -2064,8 +2635,8 @@ export default function Home() {
                 value={timezone}
                 onChange={e => setTimezone(e.target.value)}
                 style={{
-                  width: '100%', padding: '10px 12px', background: '#0a0a0f',
-                  border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0',
+                  width: '100%', padding: '10px 12px', background: 'var(--c-inner)',
+                  border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-text)',
                   fontSize: 13, outline: 'none', cursor: 'pointer',
                 }}
               >
@@ -2076,8 +2647,8 @@ export default function Home() {
             </div>
 
             {/* ── 2. BYBIT API KEYS ──────────────────────────── */}
-            <div style={{ padding: 16, background: '#111118', border: `1px solid ${serverStatus?.bybit ? '#22c55e33' : '#1e1e2e'}`, borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>2 · BYBIT API KEYS</div>
+            <div style={{ padding: 16, background: 'var(--c-card)', border: `1px solid ${serverStatus?.bybit ? '#22c55e33' : 'var(--c-border)'}`, borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 12 }}>2 · BYBIT API KEYS</div>
 
               {serverStatus?.bybit && !apiKey && (
                 <div style={{ marginBottom: 12, padding: '9px 12px', background: '#16a34a18', border: '1px solid #22c55e33', borderRadius: 6, fontSize: 12, color: '#22c55e' }}>
@@ -2086,40 +2657,40 @@ export default function Home() {
               )}
 
               <div style={{ marginBottom: 10 }}>
-                <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>
-                  API Key {serverStatus?.bybit ? <span style={{ color: '#475569', fontSize: 11 }}>(optional override)</span> : null}
+                <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 12, marginBottom: 4 }}>
+                  API Key {serverStatus?.bybit ? <span style={{ color: 'var(--c-faint)', fontSize: 11 }}>(optional override)</span> : null}
                   {apiKey && <span style={{ color: '#22c55e', marginLeft: 8, fontSize: 11 }}>✓ set</span>}
                 </label>
                 <input value={apiKey} onChange={e => setApiKey(e.target.value)}
                   placeholder={serverStatus?.bybit ? 'Leave blank to use Vercel env var…' : 'Paste Bybit API key…'}
-                  style={{ width: '100%', padding: '10px 12px', background: '#0a0a0f', border: `1px solid ${apiKey ? '#22c55e33' : '#1e1e2e'}`, borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                  style={{ width: '100%', padding: '10px 12px', background: 'var(--c-inner)', border: `1px solid ${apiKey ? '#22c55e33' : 'var(--c-border)'}`, borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
               </div>
 
               <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', color: '#64748b', fontSize: 12, marginBottom: 4 }}>
-                  API Secret {serverStatus?.bybit ? <span style={{ color: '#475569', fontSize: 11 }}>(optional override)</span> : null}
+                <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 12, marginBottom: 4 }}>
+                  API Secret {serverStatus?.bybit ? <span style={{ color: 'var(--c-faint)', fontSize: 11 }}>(optional override)</span> : null}
                   {apiSecret && <span style={{ color: '#22c55e', marginLeft: 8, fontSize: 11 }}>✓ set</span>}
                 </label>
                 <div style={{ position: 'relative' }}>
                   <input type={showSecret ? 'text' : 'password'} value={apiSecret}
                     onChange={e => setApiSecret(e.target.value)}
                     placeholder={serverStatus?.bybit ? 'Leave blank to use Vercel env var…' : 'Paste Bybit API secret…'}
-                    style={{ width: '100%', padding: '10px 42px 10px 12px', background: '#0a0a0f', border: `1px solid ${apiSecret ? '#22c55e33' : '#1e1e2e'}`, borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
-                  <button onClick={() => setShowSecret(v => !v)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 16 }}>
+                    style={{ width: '100%', padding: '10px 42px 10px 12px', background: 'var(--c-inner)', border: `1px solid ${apiSecret ? '#22c55e33' : 'var(--c-border)'}`, borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                  <button onClick={() => setShowSecret(v => !v)} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--c-faint)', cursor: 'pointer', fontSize: 16 }}>
                     {showSecret ? '🙈' : '👁'}
                   </button>
                 </div>
               </div>
 
-              <div style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6, fontSize: 11, color: '#334155', lineHeight: 1.6 }}>
+              <div style={{ padding: '8px 12px', background: 'var(--c-inner)', borderRadius: 6, fontSize: 11, color: 'var(--c-faintest)', lineHeight: 1.6 }}>
                 Keys are stored in your browser only — never sent to any server except Bybit directly over HTTPS.
-                On Bybit: Account → API Management → Create key with <strong style={{ color: '#475569' }}>Trade</strong> permission only. No withdrawal permission needed or wanted.
+                On Bybit: Account → API Management → Create key with <strong style={{ color: 'var(--c-faint)' }}>Trade</strong> permission only. No withdrawal permission needed or wanted.
               </div>
             </div>
 
             {/* ── 3. ACCOUNT & RISK LIMITS ───────────────────── */}
-            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>3 · ACCOUNT & RISK LIMITS</div>
+            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 12 }}>3 · ACCOUNT & RISK LIMITS</div>
 
               {/* Expected ROI per trade — top of section for visibility */}
               <div style={{ marginBottom: 14, padding: 12, background: '#0d0d16', border: '1px solid #6366f133', borderRadius: 8 }}>
@@ -2130,19 +2701,19 @@ export default function Home() {
                   {[0.5, 0.75, 1, 1.5, 2, 3].map(p => (
                     <button key={p} onClick={() => setTargetSpotPct(p)} style={{
                       padding: '7px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700,
-                      background: targetSpotPct === p ? '#6366f1' : '#111118',
-                      color: targetSpotPct === p ? '#fff' : '#475569',
+                      background: targetSpotPct === p ? '#6366f1' : 'var(--c-card)',
+                      color: targetSpotPct === p ? '#fff' : 'var(--c-faint)',
                     }}>{p}%</button>
                   ))}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 4 }}>
-                    <span style={{ color: '#334155', fontSize: 11 }}>custom:</span>
+                    <span style={{ color: 'var(--c-faintest)', fontSize: 11 }}>custom:</span>
                     <input type="number" min={0.1} max={10} step={0.1} value={targetSpotPct}
                       onChange={e => setTargetSpotPct(parseFloat(e.target.value) || 1)}
-                      style={{ width: 64, padding: '7px 8px', background: '#111118', border: '1px solid #6366f133', borderRadius: 6, color: '#818cf8', outline: 'none', fontSize: 13, textAlign: 'center', fontWeight: 700 }} />
-                    <span style={{ color: '#334155', fontSize: 11 }}>%</span>
+                      style={{ width: 64, padding: '7px 8px', background: 'var(--c-card)', border: '1px solid #6366f133', borderRadius: 6, color: '#818cf8', outline: 'none', fontSize: 13, textAlign: 'center', fontWeight: 700 }} />
+                    <span style={{ color: 'var(--c-faintest)', fontSize: 11 }}>%</span>
                   </div>
                 </div>
-                <div style={{ marginTop: 8, fontSize: 11, color: '#475569' }}>
+                <div style={{ marginTop: 8, fontSize: 11, color: 'var(--c-faint)' }}>
                   At 5× leverage: <span style={{ color: '#818cf8', fontWeight: 700 }}>{(targetSpotPct * 5).toFixed(1)}% ROI on margin</span>
                   {' '}· <span style={{ color: '#22c55e' }}>+${(accountSize * targetSpotPct * 5 / 100).toFixed(0)} gross</span>
                   {' '}per trade on ${accountSize.toLocaleString()} account
@@ -2152,55 +2723,55 @@ export default function Home() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                 {/* Account size */}
                 <div>
-                  <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>
-                    Account size (USDT) <span style={{ color: '#334155' }}>· your balance</span>
+                  <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 3 }}>
+                    Account size (USDT) <span style={{ color: 'var(--c-faintest)' }}>· your balance</span>
                   </label>
                   <input type="number" min={100} value={accountSize} onChange={e => setAccountSize(+e.target.value || 2000)}
-                    style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '9px 10px', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
                 </div>
 
                 {/* Risk per trade */}
                 <div>
                   <label style={{ display: 'block', fontSize: 11, marginBottom: 3 }}>
-                    <span style={{ color: '#64748b' }}>Risk per trade (%)</span>
+                    <span style={{ color: 'var(--c-dim)' }}>Risk per trade (%)</span>
                     <span style={{ marginLeft: 6, fontSize: 10, color: riskPct <= 1 ? '#22c55e' : riskPct <= 2 ? '#eab308' : '#ef4444', fontWeight: 700 }}>
                       {riskPct <= 1 ? '✓ conservative' : riskPct <= 2 ? '⚠ moderate' : '✗ high risk'}
                     </span>
                   </label>
                   <input type="number" min={0.1} max={10} step={0.1} value={riskPct} onChange={e => setRiskPct(parseFloat(e.target.value) || 1)}
-                    style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: `1px solid ${riskPct <= 2 ? '#1e1e2e' : '#ef444444'}`, borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '9px 10px', background: 'var(--c-inner)', border: `1px solid ${riskPct <= 2 ? 'var(--c-border)' : '#ef444444'}`, borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
                 </div>
 
                 {/* Daily loss limit */}
                 <div>
-                  <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>
-                    Daily loss limit ($) <span style={{ color: '#334155' }}>· rec: ${(accountSize * 0.04).toFixed(0)}</span>
+                  <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 3 }}>
+                    Daily loss limit ($) <span style={{ color: 'var(--c-faintest)' }}>· rec: ${(accountSize * 0.04).toFixed(0)}</span>
                   </label>
                   <input type="number" min={10} value={dailyLossLimit} onChange={e => setDailyLossLimit(+e.target.value || 80)}
-                    style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #ef444433', borderRadius: 6, color: '#ef4444', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '9px 10px', background: 'var(--c-inner)', border: '1px solid #ef444433', borderRadius: 6, color: '#ef4444', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
                 </div>
 
                 {/* Daily profit target */}
                 <div>
-                  <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 3 }}>
-                    Daily profit target ($) <span style={{ color: '#334155' }}>· rec: ${(accountSize * 0.05).toFixed(0)}</span>
+                  <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 3 }}>
+                    Daily profit target ($) <span style={{ color: 'var(--c-faintest)' }}>· rec: ${(accountSize * 0.05).toFixed(0)}</span>
                   </label>
                   <input type="number" min={10} value={dailyTarget} onChange={e => setDailyTarget(+e.target.value || 100)}
-                    style={{ width: '100%', padding: '9px 10px', background: '#0a0a0f', border: '1px solid #22c55e33', borderRadius: 6, color: '#22c55e', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '9px 10px', background: 'var(--c-inner)', border: '1px solid #22c55e33', borderRadius: 6, color: '#22c55e', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
                 </div>
               </div>
 
               {/* Max trades per day */}
               <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', color: '#64748b', fontSize: 11, marginBottom: 6 }}>
-                  Max trades per day <span style={{ color: '#334155' }}>· rec: 3–5 quality setups only</span>
+                <label style={{ display: 'block', color: 'var(--c-dim)', fontSize: 11, marginBottom: 6 }}>
+                  Max trades per day <span style={{ color: 'var(--c-faintest)' }}>· rec: 3–5 quality setups only</span>
                 </label>
                 <div style={{ display: 'flex', gap: 6 }}>
                   {[3, 4, 5, 7, 10].map(n => (
                     <button key={n} onClick={() => setMaxTrades(n)} style={{
                       padding: '6px 14px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700,
-                      background: maxTrades === n ? (n <= 5 ? '#22c55e22' : '#ef444422') : '#0a0a0f',
-                      color: maxTrades === n ? (n <= 5 ? '#22c55e' : '#ef4444') : '#334155',
+                      background: maxTrades === n ? (n <= 5 ? '#22c55e22' : '#ef444422') : 'var(--c-inner)',
+                      color: maxTrades === n ? (n <= 5 ? '#22c55e' : '#ef4444') : 'var(--c-faintest)',
                     }}>{n}</button>
                   ))}
                 </div>
@@ -2220,23 +2791,23 @@ export default function Home() {
                 const rr = netProfit / riskAmt;
                 const tradesNeeded = netProfit > 0 ? Math.ceil(dailyTarget / netProfit) : '∞';
                 return (
-                  <div style={{ background: '#0a0a0f', borderRadius: 8, padding: '12px 14px' }}>
-                    <div style={{ fontWeight: 700, fontSize: 11, color: '#334155', marginBottom: 8, letterSpacing: '0.06em' }}>LIVE MATH AT {effLev}× · {targetSpotPct}% MOVE</div>
+                  <div style={{ background: 'var(--c-inner)', borderRadius: 8, padding: '12px 14px' }}>
+                    <div style={{ fontWeight: 700, fontSize: 11, color: 'var(--c-faintest)', marginBottom: 8, letterSpacing: '0.06em' }}>LIVE MATH AT {effLev}× · {targetSpotPct}% MOVE</div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px 10px', fontSize: 12 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#475569' }}>Position</span>
-                        <span style={{ color: '#e2e8f0', fontWeight: 700 }}>${position.toLocaleString()}</span>
+                        <span style={{ color: 'var(--c-faint)' }}>Position</span>
+                        <span style={{ color: 'var(--c-text)', fontWeight: 700 }}>${position.toLocaleString()}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#475569' }}>Risk amount</span>
+                        <span style={{ color: 'var(--c-faint)' }}>Risk amount</span>
                         <span style={{ color: '#ef4444', fontWeight: 700 }}>−${riskAmt.toFixed(0)}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#475569' }}>Gross profit</span>
-                        <span style={{ color: '#94a3b8' }}>+${grossProfit.toFixed(2)}</span>
+                        <span style={{ color: 'var(--c-faint)' }}>Gross profit</span>
+                        <span style={{ color: 'var(--c-muted)' }}>+${grossProfit.toFixed(2)}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#475569' }}>Fees (round trip)</span>
+                        <span style={{ color: 'var(--c-faint)' }}>Fees (round trip)</span>
                         <span style={{ color: '#eab308' }}>−${(entryFee + exitFee).toFixed(2)}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -2244,23 +2815,23 @@ export default function Home() {
                         <span style={{ color: netProfit > 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>+${netProfit.toFixed(2)}</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#475569' }}>ROI on margin</span>
+                        <span style={{ color: 'var(--c-faint)' }}>ROI on margin</span>
                         <span style={{ color: '#818cf8', fontWeight: 700 }}>{((netProfit / accountSize) * 100).toFixed(2)}%</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#475569' }}>Net R:R</span>
+                        <span style={{ color: 'var(--c-faint)' }}>Net R:R</span>
                         <span style={{ color: rr >= 2 ? '#22c55e' : rr >= 1 ? '#eab308' : '#ef4444', fontWeight: 700 }}>{rr.toFixed(2)}×</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#475569' }}>Wins to hit ${dailyTarget}</span>
+                        <span style={{ color: 'var(--c-faint)' }}>Wins to hit ${dailyTarget}</span>
                         <span style={{ color: typeof tradesNeeded === 'number' && tradesNeeded <= maxTrades ? '#22c55e' : '#eab308', fontWeight: 700 }}>{tradesNeeded} trades</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#475569' }}>Liq. distance</span>
+                        <span style={{ color: 'var(--c-faint)' }}>Liq. distance</span>
                         <span style={{ color: '#ef4444', fontWeight: 700 }}>−{Math.max(0, (1/effLev - 0.005)*100).toFixed(1)}% spot</span>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#475569' }}>Max loss today</span>
+                        <span style={{ color: 'var(--c-faint)' }}>Max loss today</span>
                         <span style={{ color: '#ef4444', fontWeight: 700 }}>−${dailyLossLimit} hard stop</span>
                       </div>
                     </div>
@@ -2270,23 +2841,23 @@ export default function Home() {
             </div>
 
             {/* ── 4. EXECUTION DEFAULTS ──────────────────────── */}
-            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>4 · EXECUTION DEFAULTS</div>
+            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 12 }}>4 · EXECUTION DEFAULTS</div>
 
               {/* Order type */}
               <div style={{ marginBottom: 14 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                  <label style={{ color: '#64748b', fontSize: 12 }}>Default order type</label>
+                  <label style={{ color: 'var(--c-dim)', fontSize: 12 }}>Default order type</label>
                   <span style={{ fontSize: 11, color: orderType === 'Limit' ? '#22c55e' : '#eab308' }}>
                     {orderType === 'Limit' ? '✓ Limit saves 0.035% fees per trade' : '⚠ Market pays taker fees — more expensive'}
                   </span>
                 </div>
-                <div style={{ display: 'flex', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: 8, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', background: 'var(--c-inner)', border: '1px solid var(--c-border)', borderRadius: 8, overflow: 'hidden' }}>
                   {(['Limit', 'Market'] as const).map(t => (
                     <button key={t} onClick={() => setOrderType(t)} style={{
                       flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700,
                       background: orderType === t ? (t === 'Limit' ? '#22c55e22' : '#ef444422') : 'transparent',
-                      color: orderType === t ? (t === 'Limit' ? '#22c55e' : '#ef4444') : '#334155',
+                      color: orderType === t ? (t === 'Limit' ? '#22c55e' : '#ef4444') : 'var(--c-faintest)',
                     }}>
                       {t === 'Limit' ? '📋 Limit (maker 0.02%)' : '⚡ Market (taker 0.055%)'}
                     </button>
@@ -2297,26 +2868,26 @@ export default function Home() {
               {/* Leverage note */}
               <div style={{ marginBottom: 14, padding: 12, background: '#6366f111', border: '1px solid #6366f133', borderRadius: 8 }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: '#818cf8', marginBottom: 3 }}>Leverage — set freely per trade</div>
-                <div style={{ fontSize: 11, color: '#475569', lineHeight: 1.5 }}>
+                <div style={{ fontSize: 11, color: 'var(--c-faint)', lineHeight: 1.5 }}>
                   Set your preferred leverage in the trade entry panel. The engine recommends a leverage per signal — you can override it up to 200×. Bybit enforces pair-specific limits server-side.
                 </div>
               </div>
 
               {/* Force override */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#0a0a0f', borderRadius: 6 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'var(--c-inner)', borderRadius: 6 }}>
                 <div>
-                  <div style={{ fontSize: 13, color: forceTrade ? '#eab308' : '#64748b', fontWeight: 600 }}>
+                  <div style={{ fontSize: 13, color: forceTrade ? '#eab308' : 'var(--c-dim)', fontWeight: 600 }}>
                     {forceTrade ? '⚠ Funding rate check bypassed' : 'Funding rate gate: ON'}
                   </div>
-                  <div style={{ fontSize: 11, color: '#334155', marginTop: 2 }}>
+                  <div style={{ fontSize: 11, color: 'var(--c-faintest)', marginTop: 2 }}>
                     When ON, trades are blocked if funding rate exceeds ±0.10% (squeeze risk)
                   </div>
                 </div>
                 <button onClick={() => setForceTrade(v => !v)} style={{
                   padding: '7px 16px', marginLeft: 12, flexShrink: 0, borderRadius: 6, cursor: 'pointer', fontWeight: 700, fontSize: 12,
-                  background: forceTrade ? '#eab30822' : '#0a0a0f',
-                  border: `1px solid ${forceTrade ? '#eab30844' : '#1e1e2e'}`,
-                  color: forceTrade ? '#eab308' : '#475569',
+                  background: forceTrade ? '#eab30822' : 'var(--c-inner)',
+                  border: `1px solid ${forceTrade ? '#eab30844' : 'var(--c-border)'}`,
+                  color: forceTrade ? '#eab308' : 'var(--c-faint)',
                 }}>
                   {forceTrade ? 'BYPASS' : 'CHECK'}
                 </button>
@@ -2324,8 +2895,8 @@ export default function Home() {
             </div>
 
             {/* ── 5. AI ANALYSIS PROVIDER ────────────────────── */}
-            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 12 }}>5 · AI ANALYSIS PROVIDER</div>
+            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 12 }}>5 · AI ANALYSIS PROVIDER</div>
 
               {/* Provider selector */}
               <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
@@ -2336,9 +2907,9 @@ export default function Home() {
                 ] as { id: AiProvider; label: string; sub: string; color: string; cost: string }[]).map(p => (
                   <button key={p.id} onClick={() => setAiProvider(p.id)} style={{
                     flex: 1, padding: '10px 8px', borderRadius: 8, cursor: 'pointer', textAlign: 'center',
-                    background: aiProvider === p.id ? `${p.color}18` : '#0a0a0f',
-                    border: `1px solid ${aiProvider === p.id ? p.color : '#1e1e2e'}`,
-                    color: aiProvider === p.id ? p.color : '#334155',
+                    background: aiProvider === p.id ? `${p.color}18` : 'var(--c-inner)',
+                    border: `1px solid ${aiProvider === p.id ? p.color : 'var(--c-border)'}`,
+                    color: aiProvider === p.id ? p.color : 'var(--c-faintest)',
                   }}>
                     <div style={{ fontWeight: 800, fontSize: 13 }}>{p.label}</div>
                     <div style={{ fontSize: 10, opacity: 0.8, marginTop: 2 }}>{p.sub} · {p.cost}</div>
@@ -2348,10 +2919,10 @@ export default function Home() {
 
               {/* API key inputs — paste your keys here, no Vercel setup needed */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <span style={{ fontSize: 12, color: '#64748b' }}>AI Provider API Keys</span>
+                <span style={{ fontSize: 12, color: 'var(--c-dim)' }}>AI Provider API Keys</span>
                 <button onClick={() => setShowAiKeys(v => !v)} style={{
-                  padding: '3px 10px', background: 'none', border: '1px solid #1e1e2e',
-                  borderRadius: 5, color: '#475569', cursor: 'pointer', fontSize: 11,
+                  padding: '3px 10px', background: 'none', border: '1px solid var(--c-border)',
+                  borderRadius: 5, color: 'var(--c-faint)', cursor: 'pointer', fontSize: 11,
                 }}>
                   {showAiKeys ? 'Hide' : 'Show'} keys
                 </button>
@@ -2364,7 +2935,7 @@ export default function Home() {
               ] as { id: string; label: string; value: string; set: (v: string) => void; placeholder: string; color: string; ok: boolean; serverOk: boolean }[]).map(p => (
                 <div key={p.id} style={{ marginBottom: 8 }}>
                   <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
-                    <span style={{ color: aiProvider === p.id ? p.color : '#475569', fontWeight: aiProvider === p.id ? 700 : 400 }}>
+                    <span style={{ color: aiProvider === p.id ? p.color : 'var(--c-faint)', fontWeight: aiProvider === p.id ? 700 : 400 }}>
                       {p.label}{aiProvider === p.id ? ' ← active' : ''}
                     </span>
                     {p.ok
@@ -2380,18 +2951,18 @@ export default function Home() {
                     onChange={e => p.set(e.target.value)}
                     placeholder={p.serverOk && !p.ok ? 'Leave blank — using Vercel env var' : p.placeholder}
                     style={{
-                      width: '100%', padding: '8px 12px', background: '#0a0a0f',
-                      border: `1px solid ${p.ok ? `${p.color}44` : p.serverOk ? '#22c55e22' : '#1e1e2e'}`,
-                      borderRadius: 6, color: '#e2e8f0', outline: 'none', fontSize: 12,
+                      width: '100%', padding: '8px 12px', background: 'var(--c-inner)',
+                      border: `1px solid ${p.ok ? `${p.color}44` : p.serverOk ? '#22c55e22' : 'var(--c-border)'}`,
+                      borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 12,
                       boxSizing: 'border-box', fontFamily: 'monospace',
                     }}
                   />
                 </div>
               ))}
 
-              <div style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6, fontSize: 11, color: '#334155', lineHeight: 1.6, marginTop: 4 }}>
+              <div style={{ padding: '8px 12px', background: 'var(--c-inner)', borderRadius: 6, fontSize: 11, color: 'var(--c-faintest)', lineHeight: 1.6, marginTop: 4 }}>
                 Local keys (entered above) override Vercel env vars. Leave blank to use server-side keys.
-                Get keys: <span style={{ color: '#475569' }}>console.anthropic.com · platform.openai.com · platform.deepseek.com</span>
+                Get keys: <span style={{ color: 'var(--c-faint)' }}>console.anthropic.com · platform.openai.com · platform.deepseek.com</span>
               </div>
             </div>
 
@@ -2408,8 +2979,8 @@ export default function Home() {
             </button>
 
             {/* ── 6. RISK MANAGEMENT STRATEGIES ─────────────── */}
-            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 12, color: '#475569', letterSpacing: '0.08em', marginBottom: 14 }}>6 · RISK MANAGEMENT STRATEGIES</div>
+            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 14 }}>6 · RISK MANAGEMENT STRATEGIES</div>
 
               {/* Strategy: Position Sizing */}
               {(() => {
@@ -2419,30 +2990,30 @@ export default function Home() {
                 const stopDistPct = 1; // typical 1% stop for alts
                 const positionByRisk = riskAmt / (stopDistPct / 100);
                 return (
-                  <div style={{ marginBottom: 12, padding: 12, background: '#0a0a0f', borderRadius: 8 }}>
+                  <div style={{ marginBottom: 12, padding: 12, background: 'var(--c-inner)', borderRadius: 8 }}>
                     <div style={{ fontWeight: 700, fontSize: 12, color: '#818cf8', marginBottom: 8 }}>POSITION SIZING — Never Risk More Than Your Limit</div>
-                    <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.7, marginBottom: 8 }}>
-                      Formula: <span style={{ color: '#e2e8f0' }}>Risk $ ÷ Stop Distance % = Max Position Size</span>
+                    <div style={{ fontSize: 12, color: 'var(--c-faint)', lineHeight: 1.7, marginBottom: 8 }}>
+                      Formula: <span style={{ color: 'var(--c-text)' }}>Risk $ ÷ Stop Distance % = Max Position Size</span>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 12 }}>
-                      <div style={{ padding: '6px 10px', background: '#111118', borderRadius: 6 }}>
-                        <div style={{ color: '#475569', fontSize: 10, marginBottom: 2 }}>Max risk this trade</div>
+                      <div style={{ padding: '6px 10px', background: 'var(--c-card)', borderRadius: 6 }}>
+                        <div style={{ color: 'var(--c-faint)', fontSize: 10, marginBottom: 2 }}>Max risk this trade</div>
                         <div style={{ color: '#ef4444', fontWeight: 700 }}>${riskAmt.toFixed(0)} ({riskPct}% of ${accountSize.toLocaleString()})</div>
                       </div>
-                      <div style={{ padding: '6px 10px', background: '#111118', borderRadius: 6 }}>
-                        <div style={{ color: '#475569', fontSize: 10, marginBottom: 2 }}>Position at {effLev}×</div>
+                      <div style={{ padding: '6px 10px', background: 'var(--c-card)', borderRadius: 6 }}>
+                        <div style={{ color: 'var(--c-faint)', fontSize: 10, marginBottom: 2 }}>Position at {effLev}×</div>
                         <div style={{ color: '#818cf8', fontWeight: 700 }}>${position.toLocaleString()}</div>
                       </div>
-                      <div style={{ padding: '6px 10px', background: '#111118', borderRadius: 6 }}>
-                        <div style={{ color: '#475569', fontSize: 10, marginBottom: 2 }}>Risk-sized at 1% stop</div>
-                        <div style={{ color: '#e2e8f0', fontWeight: 700 }}>${positionByRisk.toLocaleString()}</div>
+                      <div style={{ padding: '6px 10px', background: 'var(--c-card)', borderRadius: 6 }}>
+                        <div style={{ color: 'var(--c-faint)', fontSize: 10, marginBottom: 2 }}>Risk-sized at 1% stop</div>
+                        <div style={{ color: 'var(--c-text)', fontWeight: 700 }}>${positionByRisk.toLocaleString()}</div>
                       </div>
-                      <div style={{ padding: '6px 10px', background: '#111118', borderRadius: 6 }}>
-                        <div style={{ color: '#475569', fontSize: 10, marginBottom: 2 }}>Liquidation distance</div>
+                      <div style={{ padding: '6px 10px', background: 'var(--c-card)', borderRadius: 6 }}>
+                        <div style={{ color: 'var(--c-faint)', fontSize: 10, marginBottom: 2 }}>Liquidation distance</div>
                         <div style={{ color: '#ef4444', fontWeight: 700 }}>−{Math.max(0,(1/effLev-0.005)*100).toFixed(1)}% spot</div>
                       </div>
                     </div>
-                    <div style={{ marginTop: 8, fontSize: 11, color: '#334155' }}>
+                    <div style={{ marginTop: 8, fontSize: 11, color: 'var(--c-faintest)' }}>
                       Your SL must be further than {Math.max(0,(1/effLev-0.005)*100).toFixed(1)}% from entry to avoid liquidation at {effLev}× leverage.
                     </div>
                   </div>
@@ -2460,7 +3031,7 @@ export default function Home() {
                 const tp2Profit = position * 0.25 * (spotMove * 1.5);
                 const tp3Profit = position * 0.25 * (spotMove * 2.5);
                 return (
-                  <div style={{ marginBottom: 12, padding: 12, background: '#0a0a0f', borderRadius: 8 }}>
+                  <div style={{ marginBottom: 12, padding: 12, background: 'var(--c-inner)', borderRadius: 8 }}>
                     <div style={{ fontWeight: 700, fontSize: 12, color: '#22c55e', marginBottom: 8 }}>PARTIAL EXIT STRATEGY — Lock Profits, Let Rest Run</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {[
@@ -2468,10 +3039,10 @@ export default function Home() {
                         { label: 'TP2 — Close 25%', pct: `${(targetSpotPct*1.5).toFixed(1)}% move`, profit: tp2Profit, color: '#4ade80', note: 'Trail stop to TP1 level — guaranteed profit on remaining' },
                         { label: 'TP3 — Close 25%', pct: `${(targetSpotPct*2.5).toFixed(1)}% move`, profit: tp3Profit, color: '#86efac', note: 'Let this run — if market extends you capture the full move' },
                       ].map(t => (
-                        <div key={t.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', background: '#111118', borderRadius: 6 }}>
+                        <div key={t.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 10px', background: 'var(--c-card)', borderRadius: 6 }}>
                           <div>
                             <div style={{ fontSize: 12, fontWeight: 700, color: t.color }}>{t.label} ({t.pct})</div>
-                            <div style={{ fontSize: 10, color: '#334155', marginTop: 1 }}>{t.note}</div>
+                            <div style={{ fontSize: 10, color: 'var(--c-faintest)', marginTop: 1 }}>{t.note}</div>
                           </div>
                           <div style={{ fontSize: 13, fontWeight: 800, color: t.color }}>+${t.profit.toFixed(2)}</div>
                         </div>
@@ -2487,7 +3058,7 @@ export default function Home() {
                 const netPerTrade = accountSize * effLev * (targetSpotPct/100) - accountSize * effLev * 0.00075;
                 const tradesNeeded = netPerTrade > 0 ? Math.ceil(dailyTarget / netPerTrade) : '∞';
                 return (
-                  <div style={{ marginBottom: 12, padding: 12, background: '#0a0a0f', borderRadius: 8 }}>
+                  <div style={{ marginBottom: 12, padding: 12, background: 'var(--c-inner)', borderRadius: 8 }}>
                     <div style={{ fontWeight: 700, fontSize: 12, color: '#eab308', marginBottom: 8 }}>SESSION RULES — Discipline Beats Intelligence</div>
                     {[
                       { icon: '🔴', rule: `Stop at −$${dailyLossLimit}`,           detail: `${Math.ceil(dailyLossLimit / (accountSize * riskPct / 100))} consecutive losses. Log off. No revenge trades.` },
@@ -2497,11 +3068,11 @@ export default function Home() {
                       { icon: '📊', rule: 'Score ≥ 75 + alignment ≥ 70% only',      detail: 'Autoscan filters this for you. Manual entries must meet same standard.' },
                       { icon: '₿',  rule: 'BTC divergence = half size or skip',     detail: 'If BTC trends opposite your trade direction, reduce size by 50%.' },
                     ].map(({ icon, rule, detail }) => (
-                      <div key={rule} style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid #0f0f17', alignItems: 'flex-start' }}>
+                      <div key={rule} style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--c-border)', alignItems: 'flex-start' }}>
                         <span style={{ fontSize: 14, marginTop: 1 }}>{icon}</span>
                         <div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{rule}</div>
-                          <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>{detail}</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--c-text)' }}>{rule}</div>
+                          <div style={{ fontSize: 11, color: 'var(--c-faint)', marginTop: 2 }}>{detail}</div>
                         </div>
                       </div>
                     ))}
@@ -2510,8 +3081,8 @@ export default function Home() {
               })()}
 
               {/* Strategy: ICT Entry Checklist */}
-              <div style={{ padding: 12, background: '#0a0a0f', borderRadius: 8 }}>
-                <div style={{ fontWeight: 700, fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>ICT ENTRY CHECKLIST — All Must Be True</div>
+              <div style={{ padding: 12, background: 'var(--c-inner)', borderRadius: 8 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-muted)', marginBottom: 8 }}>ICT ENTRY CHECKLIST — All Must Be True</div>
                 {[
                   ['BOS or CHoCH confirmed on 15m or 1h', 'Structure must have shifted in your direction'],
                   ['Price in OB or FVG zone', 'Do not chase — wait for price to return to value'],
@@ -2522,10 +3093,10 @@ export default function Home() {
                   ['RSI not extreme (not >75 for longs, not <25 for shorts)', 'Avoid entering exhausted moves'],
                   ['SL placed below OB/FVG bottom (long) or above (short)', 'Technical stop, not arbitrary %'],
                 ].map(([check, reason]) => (
-                  <div key={check} style={{ display: 'flex', gap: 8, padding: '5px 0', borderBottom: '1px solid #0f0f17', alignItems: 'flex-start' }}>
-                    <span style={{ color: '#334155', fontSize: 14, marginTop: 0 }}>□</span>
+                  <div key={check} style={{ display: 'flex', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--c-border)', alignItems: 'flex-start' }}>
+                    <span style={{ color: 'var(--c-faintest)', fontSize: 14, marginTop: 0 }}>□</span>
                     <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>{check}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--c-dim)' }}>{check}</div>
                       <div style={{ fontSize: 10, color: '#1e3a2e', marginTop: 1 }}>{reason}</div>
                     </div>
                   </div>
