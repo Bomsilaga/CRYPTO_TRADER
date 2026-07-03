@@ -2621,20 +2621,31 @@ export default function Home() {
                           <div style={{ marginTop: 4 }}>
                             {/* Labels above bar */}
                             <div style={{ position: 'relative', height: 18, marginBottom: 3 }}>
-                              <span style={{ position: 'absolute', left: 0, fontSize: 10, color: '#ef4444', fontWeight: 700 }}>SL</span>
+                              {/* Edge labels: left=low price, right=high price; flip meaning by direction */}
+                              <span style={{ position: 'absolute', left: 0, fontSize: 10, fontWeight: 700, color: t.direction === 'LONG' ? '#ef4444' : '#16a34a' }}>
+                                {t.direction === 'LONG' ? 'SL' : 'TP3'}
+                              </span>
                               <span style={{ position: 'absolute', left: `${markerEntry}%`, transform: 'translateX(-50%)', fontSize: 10, color: 'var(--c-muted)', fontWeight: 700 }}>ENTRY</span>
                               <span style={{ position: 'absolute', left: `${markerBE}%`, transform: 'translateX(-50%)', fontSize: 9, color: inProfitZone ? '#22c55e' : '#eab308', fontWeight: 700 }}>BE</span>
                               <span style={{ position: 'absolute', left: `${markerTp1}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#4ade80', fontWeight: 700 }}>TP1</span>
                               <span style={{ position: 'absolute', left: `${markerTp2}%`, transform: 'translateX(-50%)', fontSize: 10, color: '#22c55e', fontWeight: 700 }}>TP2</span>
-                              <span style={{ position: 'absolute', right: 0, fontSize: 10, color: '#16a34a', fontWeight: 700 }}>TP3</span>
+                              <span style={{ position: 'absolute', right: 0, fontSize: 10, fontWeight: 700, color: t.direction === 'LONG' ? '#16a34a' : '#ef4444' }}>
+                                {t.direction === 'LONG' ? 'TP3' : 'SL'}
+                              </span>
                             </div>
 
                             {/* Bar */}
                             <div style={{ position: 'relative', height: 44, borderRadius: 8, overflow: 'hidden', background: 'var(--c-bg)' }}>
-                              {/* Red zone: SL → entry */}
-                              <div style={{ position: 'absolute', left: 0, right: `${100 - markerEntry}%`, top: 0, bottom: 0, background: 'linear-gradient(90deg, #ef444440 0%, #ef444414 100%)' }} />
-                              {/* Green zone: entry → TP3 */}
-                              <div style={{ position: 'absolute', left: `${markerEntry}%`, right: 0, top: 0, bottom: 0, background: 'linear-gradient(90deg, #22c55e18 0%, #22c55e38 100%)' }} />
+                              {/* Loss zone (red): left-of-entry for LONG, right-of-entry for SHORT */}
+                              {t.direction === 'LONG'
+                                ? <div style={{ position: 'absolute', left: 0, right: `${100 - markerEntry}%`, top: 0, bottom: 0, background: 'linear-gradient(90deg, #ef444440 0%, #ef444414 100%)' }} />
+                                : <div style={{ position: 'absolute', left: `${markerEntry}%`, right: 0, top: 0, bottom: 0, background: 'linear-gradient(270deg, #ef444440 0%, #ef444414 100%)' }} />
+                              }
+                              {/* Profit zone (green): right-of-entry for LONG, left-of-entry for SHORT */}
+                              {t.direction === 'LONG'
+                                ? <div style={{ position: 'absolute', left: `${markerEntry}%`, right: 0, top: 0, bottom: 0, background: 'linear-gradient(90deg, #22c55e18 0%, #22c55e38 100%)' }} />
+                                : <div style={{ position: 'absolute', left: 0, right: `${100 - markerEntry}%`, top: 0, bottom: 0, background: 'linear-gradient(270deg, #22c55e18 0%, #22c55e38 100%)' }} />
+                              }
 
                               {/* Progress fill: entry → current price */}
                               {priceBarPct !== null && (
@@ -2678,14 +2689,20 @@ export default function Home() {
                             {/* Distances below bar */}
                             {currentPrice !== null && (
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
-                                <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 700 }}>
-                                  ↙ SL {(Math.abs(currentPrice - t.stopLoss) / currentPrice * 100).toFixed(2)}% away
+                                {/* Left label = lower-price end of bar */}
+                                <span style={{ fontSize: 11, fontWeight: 700, color: t.direction === 'LONG' ? '#ef4444' : '#4ade80' }}>
+                                  {t.direction === 'LONG'
+                                    ? `↙ SL ${(Math.abs(currentPrice - t.stopLoss) / currentPrice * 100).toFixed(2)}% away`
+                                    : `↙ TP1 ${(Math.abs(currentPrice - t.tp1) / currentPrice * 100).toFixed(2)}% away`}
                                 </span>
                                 <span style={{ fontSize: 10, color: 'var(--c-faint)' }}>
                                   ${currentPrice.toFixed(currentPrice < 1 ? 6 : currentPrice < 100 ? 4 : 2)}
                                 </span>
-                                <span style={{ fontSize: 11, color: '#4ade80', fontWeight: 700 }}>
-                                  TP1 {(Math.abs(currentPrice - t.tp1) / currentPrice * 100).toFixed(2)}% away ↗
+                                {/* Right label = higher-price end of bar */}
+                                <span style={{ fontSize: 11, fontWeight: 700, color: t.direction === 'LONG' ? '#4ade80' : '#ef4444' }}>
+                                  {t.direction === 'LONG'
+                                    ? `TP1 ${(Math.abs(currentPrice - t.tp1) / currentPrice * 100).toFixed(2)}% away ↗`
+                                    : `SL ${(Math.abs(currentPrice - t.stopLoss) / currentPrice * 100).toFixed(2)}% away ↗`}
                                 </span>
                               </div>
                             )}
