@@ -628,12 +628,18 @@ export default function Home() {
       const data = await r.json() as { ok: boolean; trades?: TradeEntry[]; error?: string };
       if (data.ok && Array.isArray(data.trades)) {
         const remote = data.trades;
-        const current = tradesRef.current;
+        // Use localStorage fallback so a race condition never treats empty ref as "no local trades"
+        const current = tradesRef.current.length > 0 ? tradesRef.current : (() => {
+          try { const s = localStorage.getItem('4scans-trades'); return s ? JSON.parse(s) as TradeEntry[] : []; } catch { return [] as TradeEntry[]; }
+        })();
         const remoteIds = new Set(remote.map(t => t.id));
         const localOnly = current.filter(t => !remoteIds.has(t.id));
         const merged = [...remote, ...localOnly];
         setTrades(merged);
-        try { localStorage.setItem('4scans-trades', JSON.stringify(merged)); } catch { /* ignore */ }
+        // Never wipe localStorage with an empty merge result — only write when there's data
+        if (merged.length > 0) {
+          try { localStorage.setItem('4scans-trades', JSON.stringify(merged)); } catch { /* ignore */ }
+        }
         // Push local-only trades so other devices can see them
         if (localOnly.length > 0) {
           localOnly.forEach(t => {
@@ -833,19 +839,22 @@ export default function Home() {
   }
 
   async function pushTrade(trade: TradeEntry) {
-    if (!syncKey) return;
+    const key = syncKeyRef.current || syncKey;
+    if (!key) return;
     try {
-      await fetch('/api/trades', {
+      const r = await fetch('/api/trades', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trade, syncKey }),
+        body: JSON.stringify({ trade, syncKey: key }),
       });
-      setSyncStatus('ok');
+      const data = await r.json() as { ok: boolean };
+      if (data.ok) setSyncStatus('ok'); else setSyncStatus('error');
     } catch { setSyncStatus('error'); }
   }
 
   async function patchTrade(id: string, patch: Partial<TradeEntry>) {
-    if (!syncKey) return;
+    const key = syncKeyRef.current || syncKey;
+    if (!key) return;
     try {
       await fetch(`/api/trades/${id}`, {
         method: 'PATCH',
@@ -876,7 +885,8 @@ export default function Home() {
 
   async function deleteTrade(id: string) {
     saveTrades(trades.filter(t => t.id !== id));
-    if (!syncKey) return;
+    const key = syncKeyRef.current || syncKey;
+    if (!key) return;
     try { await fetch(`/api/trades/${id}`, { method: 'DELETE' }); } catch { /* ignore */ }
   }
 
