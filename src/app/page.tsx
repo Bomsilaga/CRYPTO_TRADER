@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 
@@ -536,10 +536,13 @@ export default function Home() {
 
   // Trade journal
   const [trades, setTrades] = useState<TradeEntry[]>([]);
+  const tradesRef = useRef<TradeEntry[]>([]);  // always-current ref to avoid stale closures
   const [livePrices, setLivePrices] = useState<Record<string, { price: number; updatedAt: number }>>({});
   const [liveRefreshing, setLiveRefreshing] = useState(false);
   const [syncKey, setSyncKey] = useState('');
+  const syncKeyRef = useRef('');  // always-current ref for use inside async callbacks
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'ok' | 'error'>('idle');
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSynced, setLastSynced] = useState<number | null>(null);
   const [pendingSync, setPendingSync] = useState<Set<string>>(new Set());
 
@@ -609,20 +612,50 @@ export default function Home() {
         localStorage.setItem('4scans-sync-key', key);
       }
       setSyncKey(key);
-      setSyncStatus('syncing');
-      fetch(`/api/trades?syncKey=${encodeURIComponent(key)}`)
-        .then(r => r.json())
-        .then((data: { ok: boolean; trades?: TradeEntry[] }) => {
-          if (data.ok && data.trades) {
-            setTrades(data.trades);
-            try { localStorage.setItem('4scans-trades', JSON.stringify(data.trades)); } catch { /* ignore */ }
-            setSyncStatus('ok');
-            setLastSynced(Date.now());
-          }
-        })
-        .catch(() => setSyncStatus('error'));
+      syncKeyRef.current = key;
+      doSync(key);
     } catch { /* ignore */ }
   }, []);
+
+  // Core sync: fetch remote, merge (remote wins for matching IDs, local-only preserved),
+  // push any local-only trades back to Supabase so other devices see them.
+  async function doSync(key: string) {
+    if (!key) return;
+    setSyncStatus('syncing');
+    setSyncError(null);
+    try {
+      const r = await fetch(`/api/trades?syncKey=${encodeURIComponent(key)}`);
+      const data = await r.json() as { ok: boolean; trades?: TradeEntry[]; error?: string };
+      if (data.ok && Array.isArray(data.trades)) {
+        const remote = data.trades;
+        const current = tradesRef.current;
+        const remoteIds = new Set(remote.map(t => t.id));
+        const localOnly = current.filter(t => !remoteIds.has(t.id));
+        const merged = [...remote, ...localOnly];
+        setTrades(merged);
+        try { localStorage.setItem('4scans-trades', JSON.stringify(merged)); } catch { /* ignore */ }
+        // Push local-only trades so other devices can see them
+        if (localOnly.length > 0) {
+          localOnly.forEach(t => {
+            fetch('/api/trades', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ trade: t, syncKey: key }),
+            }).catch(() => {});
+          });
+        }
+        setSyncStatus('ok');
+        setLastSynced(Date.now());
+      } else {
+        const msg = data.error ?? 'Sync failed';
+        setSyncStatus('error');
+        setSyncError(msg);
+      }
+    } catch (e) {
+      setSyncStatus('error');
+      setSyncError(String(e));
+    }
+  }
 
   function saveSettings() {
     try {
@@ -646,33 +679,20 @@ export default function Home() {
 
   // Auto-persist trades to localStorage on every state change (catches TP/SL auto-closes too)
   useEffect(() => {
+    tradesRef.current = trades;
     if (trades.length === 0) return;
     try { localStorage.setItem('4scans-trades', JSON.stringify(trades)); } catch { /* ignore */ }
   }, [trades]);
 
-  // Background poll: pull from Supabase every 45s and merge (remote wins, local-only trades preserved)
+  // Keep syncKeyRef current so async callbacks always see the latest key
+  useEffect(() => { syncKeyRef.current = syncKey; }, [syncKey]);
+
+  // Background poll: merge from Supabase every 45s
   useEffect(() => {
     if (!syncKey) return;
-    const poll = setInterval(async () => {
-      setSyncStatus('syncing');
-      try {
-        const r = await fetch(`/api/trades?syncKey=${encodeURIComponent(syncKey)}`);
-        const data = await r.json() as { ok: boolean; trades?: TradeEntry[] };
-        if (data.ok && data.trades) {
-          const remote = data.trades;
-          setTrades(prev => {
-            const remoteIds = new Set(remote.map(t => t.id));
-            const localOnly = prev.filter(t => !remoteIds.has(t.id));
-            const merged = [...remote, ...localOnly];
-            try { localStorage.setItem('4scans-trades', JSON.stringify(merged)); } catch { /* ignore */ }
-            return merged;
-          });
-          setSyncStatus('ok');
-          setLastSynced(Date.now());
-        }
-      } catch { setSyncStatus('error'); }
-    }, 45_000);
+    const poll = setInterval(() => doSync(syncKey), 45_000);
     return () => clearInterval(poll);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncKey]);
 
   // Flush pending high/low + hourly updates to Supabase (debounced 10s, parallel)
@@ -864,18 +884,27 @@ export default function Home() {
     const key = newKey.trim();
     if (!key) return;
     setSyncKey(key);
+    syncKeyRef.current = key;
     try { localStorage.setItem('4scans-sync-key', key); } catch { /* ignore */ }
+    // Hard overwrite when switching accounts — remote is authoritative for the new key
     setSyncStatus('syncing');
+    setSyncError(null);
     try {
       const r = await fetch(`/api/trades?syncKey=${encodeURIComponent(key)}`);
-      const data = await r.json() as { ok: boolean; trades?: TradeEntry[] };
-      if (data.ok && data.trades) {
+      const data = await r.json() as { ok: boolean; trades?: TradeEntry[]; error?: string };
+      if (data.ok && Array.isArray(data.trades)) {
         setTrades(data.trades);
         try { localStorage.setItem('4scans-trades', JSON.stringify(data.trades)); } catch { /* ignore */ }
         setSyncStatus('ok');
         setLastSynced(Date.now());
+      } else {
+        setSyncStatus('error');
+        setSyncError(data.error ?? 'Load failed');
       }
-    } catch { setSyncStatus('error'); }
+    } catch (e) {
+      setSyncStatus('error');
+      setSyncError(String(e));
+    }
   }
 
   // Load all markets once for the all-coins search
@@ -2828,7 +2857,7 @@ export default function Home() {
                 {syncStatus === 'ok'
                   ? `✓ Synced${lastSynced ? ` · ${new Date(lastSynced).toLocaleTimeString()}` : ''}`
                   : syncStatus === 'syncing' ? '⟳ Syncing…'
-                  : syncStatus === 'error' ? '✗ Sync error' : '○ Not synced'}
+                  : syncStatus === 'error' ? `✗ ${syncError ?? 'Sync error'}` : '○ Not synced'}
               </span>
               <span style={{ fontSize: 10, color: 'var(--c-faintest)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 Key: {syncKey || '—'}
@@ -3150,13 +3179,27 @@ export default function Home() {
             <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)' }}>🔑 SYNC KEY</span>
-                <span style={{ fontSize: 11, color: syncStatus === 'ok' ? '#22c55e' : syncStatus === 'error' ? '#ef4444' : syncStatus === 'syncing' ? '#eab308' : 'var(--c-dim)' }}>
-                  {syncStatus === 'ok'
-                    ? `✓ Synced${lastSynced ? ` · ${new Date(lastSynced).toLocaleTimeString()}` : ''}`
-                    : syncStatus === 'error' ? '✗ Sync error'
-                    : syncStatus === 'syncing' ? '⟳ Syncing…' : '● Local only'}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: syncStatus === 'ok' ? '#22c55e' : syncStatus === 'error' ? '#ef4444' : syncStatus === 'syncing' ? '#eab308' : 'var(--c-dim)' }}>
+                    {syncStatus === 'ok'
+                      ? `✓ Synced${lastSynced ? ` · ${new Date(lastSynced).toLocaleTimeString()}` : ''}`
+                      : syncStatus === 'error' ? '✗ Sync error'
+                      : syncStatus === 'syncing' ? '⟳ Syncing…' : '● Local only'}
+                  </span>
+                  <button
+                    onClick={() => doSync(syncKeyRef.current)}
+                    disabled={syncStatus === 'syncing' || !syncKey}
+                    style={{ padding: '3px 10px', borderRadius: 5, border: '1px solid var(--c-border)', background: 'var(--c-inner)', color: 'var(--c-dim)', cursor: 'pointer', fontSize: 11 }}
+                  >
+                    {syncStatus === 'syncing' ? '⟳' : '↻ Sync Now'}
+                  </button>
+                </div>
               </div>
+              {syncError && (
+                <div style={{ marginBottom: 8, padding: '6px 10px', background: '#ef444411', border: '1px solid #ef444433', borderRadius: 6, fontSize: 11, color: '#ef4444', wordBreak: 'break-all' }}>
+                  {syncError}
+                </div>
+              )}
               <p style={{ fontSize: 12, color: 'var(--c-dim)', margin: '0 0 10px', lineHeight: 1.5 }}>
                 Your trades sync across all devices that share this key. Copy it to another device to access the same trade log.
               </p>
