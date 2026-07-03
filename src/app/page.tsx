@@ -540,6 +540,7 @@ export default function Home() {
   const [liveRefreshing, setLiveRefreshing] = useState(false);
   const [syncKey, setSyncKey] = useState('');
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'ok' | 'error'>('idle');
+  const [lastSynced, setLastSynced] = useState<number | null>(null);
   const [pendingSync, setPendingSync] = useState<Set<string>>(new Set());
 
   // All-markets browser (for search autocomplete)
@@ -600,7 +601,7 @@ export default function Home() {
       }
     } catch { /* ignore */ }
 
-    // Init sync key — generate UUID if none stored
+    // Init sync key — generate UUID if none stored, then fetch immediately (no extra render cycle)
     try {
       let key = localStorage.getItem('4scans-sync-key');
       if (!key) {
@@ -608,6 +609,18 @@ export default function Home() {
         localStorage.setItem('4scans-sync-key', key);
       }
       setSyncKey(key);
+      setSyncStatus('syncing');
+      fetch(`/api/trades?syncKey=${encodeURIComponent(key)}`)
+        .then(r => r.json())
+        .then((data: { ok: boolean; trades?: TradeEntry[] }) => {
+          if (data.ok && data.trades) {
+            setTrades(data.trades);
+            try { localStorage.setItem('4scans-trades', JSON.stringify(data.trades)); } catch { /* ignore */ }
+            setSyncStatus('ok');
+            setLastSynced(Date.now());
+          }
+        })
+        .catch(() => setSyncStatus('error'));
     } catch { /* ignore */ }
   }, []);
 
@@ -637,44 +650,52 @@ export default function Home() {
     try { localStorage.setItem('4scans-trades', JSON.stringify(trades)); } catch { /* ignore */ }
   }, [trades]);
 
-  // Once syncKey is ready, load from Supabase and merge
+  // Background poll: pull from Supabase every 45s and merge (remote wins, local-only trades preserved)
   useEffect(() => {
     if (!syncKey) return;
-    setSyncStatus('syncing');
-    fetch(`/api/trades?syncKey=${encodeURIComponent(syncKey)}`)
-      .then(r => r.json())
-      .then((data: { ok: boolean; trades?: TradeEntry[] }) => {
+    const poll = setInterval(async () => {
+      setSyncStatus('syncing');
+      try {
+        const r = await fetch(`/api/trades?syncKey=${encodeURIComponent(syncKey)}`);
+        const data = await r.json() as { ok: boolean; trades?: TradeEntry[] };
         if (data.ok && data.trades) {
-          setTrades(data.trades);
-          try { localStorage.setItem('4scans-trades', JSON.stringify(data.trades)); } catch { /* ignore */ }
+          const remote = data.trades;
+          setTrades(prev => {
+            const remoteIds = new Set(remote.map(t => t.id));
+            const localOnly = prev.filter(t => !remoteIds.has(t.id));
+            const merged = [...remote, ...localOnly];
+            try { localStorage.setItem('4scans-trades', JSON.stringify(merged)); } catch { /* ignore */ }
+            return merged;
+          });
           setSyncStatus('ok');
+          setLastSynced(Date.now());
         }
-      })
-      .catch(() => setSyncStatus('error'));
+      } catch { setSyncStatus('error'); }
+    }, 45_000);
+    return () => clearInterval(poll);
   }, [syncKey]);
 
-  // Flush pending high/low + hourly updates to Supabase (debounced 30s)
+  // Flush pending high/low + hourly updates to Supabase (debounced 10s, parallel)
   useEffect(() => {
     if (!syncKey || pendingSync.size === 0) return;
-    const timer = setTimeout(async () => {
+    const timer = setTimeout(() => {
       const ids = [...pendingSync];
       setPendingSync(new Set());
-      for (const id of ids) {
+      const patches = ids.flatMap(id => {
         const trade = trades.find(t => t.id === id);
-        if (!trade) continue;
-        try {
-          await fetch(`/api/trades/${id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              highestPrice: trade.highestPrice,
-              lowestPrice: trade.lowestPrice,
-              hourlyCandles: trade.hourlyCandles ?? [],
-            }),
-          });
-        } catch { /* ignore */ }
-      }
-    }, 30_000);
+        if (!trade) return [];
+        return [fetch(`/api/trades/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            highestPrice: trade.highestPrice,
+            lowestPrice: trade.lowestPrice,
+            hourlyCandles: trade.hourlyCandles ?? [],
+          }),
+        }).catch(() => {})];
+      });
+      if (patches.length) Promise.all(patches).then(() => setLastSynced(Date.now())).catch(() => {});
+    }, 10_000);
     return () => clearTimeout(timer);
   }, [pendingSync, syncKey, trades]);
 
@@ -852,6 +873,7 @@ export default function Home() {
         setTrades(data.trades);
         try { localStorage.setItem('4scans-trades', JSON.stringify(data.trades)); } catch { /* ignore */ }
         setSyncStatus('ok');
+        setLastSynced(Date.now());
       }
     } catch { setSyncStatus('error'); }
   }
@@ -2786,7 +2808,10 @@ export default function Home() {
                 fontSize: 11, fontWeight: 700,
                 color: syncStatus === 'ok' ? '#22c55e' : syncStatus === 'syncing' ? '#eab308' : syncStatus === 'error' ? '#ef4444' : 'var(--c-faint)',
               }}>
-                {syncStatus === 'ok' ? '✓ Synced' : syncStatus === 'syncing' ? '⟳ Syncing…' : syncStatus === 'error' ? '✗ Sync error' : '○ Not synced'}
+                {syncStatus === 'ok'
+                  ? `✓ Synced${lastSynced ? ` · ${new Date(lastSynced).toLocaleTimeString()}` : ''}`
+                  : syncStatus === 'syncing' ? '⟳ Syncing…'
+                  : syncStatus === 'error' ? '✗ Sync error' : '○ Not synced'}
               </span>
               <span style={{ fontSize: 10, color: 'var(--c-faintest)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 Key: {syncKey || '—'}
@@ -3078,7 +3103,10 @@ export default function Home() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)' }}>🔑 SYNC KEY</span>
                 <span style={{ fontSize: 11, color: syncStatus === 'ok' ? '#22c55e' : syncStatus === 'error' ? '#ef4444' : syncStatus === 'syncing' ? '#eab308' : 'var(--c-dim)' }}>
-                  {syncStatus === 'ok' ? '✓ Synced' : syncStatus === 'error' ? '✗ Sync error' : syncStatus === 'syncing' ? '⟳ Syncing…' : '● Local only'}
+                  {syncStatus === 'ok'
+                    ? `✓ Synced${lastSynced ? ` · ${new Date(lastSynced).toLocaleTimeString()}` : ''}`
+                    : syncStatus === 'error' ? '✗ Sync error'
+                    : syncStatus === 'syncing' ? '⟳ Syncing…' : '● Local only'}
                 </span>
               </div>
               <p style={{ fontSize: 12, color: 'var(--c-dim)', margin: '0 0 10px', lineHeight: 1.5 }}>
