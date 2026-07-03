@@ -2838,6 +2838,14 @@ export default function Home() {
               const pctFromEntry = (p: number) => ((p - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1)).toFixed(2);
               const livePrice = livePrices[t.symbol]?.price ?? null;
 
+              // P&L calculations
+              const riskDollars = Math.abs(t.entry - t.stopLoss) * t.qty;
+              const unrealizedPnl = isOpen && livePrice != null && t.qty
+                ? t.qty * (livePrice - t.entry) * (t.direction === 'LONG' ? 1 : -1)
+                : null;
+              const displayPnl = t.pnlDollars ?? unrealizedPnl;
+              const rMultiple = displayPnl != null && riskDollars > 0 ? displayPnl / riskDollars : null;
+
               // H/L range calculations
               const high = t.highestPrice ?? t.entry;
               const low  = t.lowestPrice  ?? t.entry;
@@ -2863,6 +2871,19 @@ export default function Home() {
                       {t.tp1Hit && <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#4ade8022', color: '#4ade80', border: '1px solid #4ade8044' }}>✓ TP1</span>}
                       {t.tp2Hit && <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}>✓ TP2</span>}
                       {t.tp3Hit && <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#16a34a22', color: '#16a34a', border: '1px solid #16a34a44' }}>✓ TP3</span>}
+                      {/* PnL chip — realized for closed, unrealized for open */}
+                      {displayPnl != null && (
+                        <span style={{
+                          padding: '2px 9px', borderRadius: 5, fontSize: 12, fontWeight: 800,
+                          background: displayPnl >= 0 ? '#22c55e22' : '#ef444422',
+                          color: displayPnl >= 0 ? '#22c55e' : '#ef4444',
+                          border: `1px solid ${displayPnl >= 0 ? '#22c55e44' : '#ef444444'}`,
+                          fontFamily: 'monospace',
+                        }}>
+                          {isOpen ? '~' : ''}{displayPnl >= 0 ? '+' : ''}${displayPnl.toFixed(2)}
+                          {rMultiple != null && <span style={{ fontSize: 10, opacity: 0.8 }}> ({rMultiple >= 0 ? '+' : ''}{rMultiple.toFixed(2)}R)</span>}
+                        </span>
+                      )}
                     </div>
                     <span style={{ fontSize: 11, color: 'var(--c-faintest)' }}>{t.timestamp} {t.timezone}</span>
                   </div>
@@ -2971,15 +2992,25 @@ export default function Home() {
                         ))}
                       </div>
 
-                      {/* P&L */}
-                      {t.pnlDollars != null && (
-                        <div style={{ marginTop: 8, padding: '8px 12px', background: t.pnlDollars >= 0 ? '#22c55e11' : '#ef444411', borderRadius: 6, border: `1px solid ${t.pnlDollars >= 0 ? '#22c55e33' : '#ef444433'}`, display: 'flex', gap: 16 }}>
-                          <span style={{ fontSize: 13, fontWeight: 800, color: t.pnlDollars >= 0 ? '#22c55e' : '#ef4444' }}>
-                            {t.pnlDollars >= 0 ? '+' : ''}${t.pnlDollars.toFixed(2)} P&L
+                      {/* P&L detail row */}
+                      {displayPnl != null && (
+                        <div style={{ marginTop: 8, padding: '8px 12px', background: displayPnl >= 0 ? '#22c55e11' : '#ef444411', borderRadius: 6, border: `1px solid ${displayPnl >= 0 ? '#22c55e33' : '#ef444433'}`, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+                          <span style={{ fontSize: 14, fontWeight: 800, color: displayPnl >= 0 ? '#22c55e' : '#ef4444', fontFamily: 'monospace' }}>
+                            {isOpen ? '~' : ''}{displayPnl >= 0 ? '+' : ''}${displayPnl.toFixed(2)}
                           </span>
-                          <span style={{ fontSize: 12, color: 'var(--c-faint)' }}>
-                            {(t.pnlDollars / (t.qty * t.entry) * 100).toFixed(2)}% on position
+                          <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>
+                            {isOpen ? 'Unrealized' : 'Realized'} P&L
                           </span>
+                          {t.qty > 0 && t.entry > 0 && (
+                            <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>
+                              {(displayPnl / (t.qty * t.entry) * 100).toFixed(2)}% on position
+                            </span>
+                          )}
+                          {rMultiple != null && (
+                            <span style={{ fontSize: 13, fontWeight: 800, color: rMultiple >= 0 ? '#22c55e' : '#ef4444', marginLeft: 'auto' }}>
+                              {rMultiple >= 0 ? '+' : ''}{rMultiple.toFixed(2)}R
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
