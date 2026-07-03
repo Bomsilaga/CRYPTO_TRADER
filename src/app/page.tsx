@@ -631,6 +631,12 @@ export default function Home() {
     } catch { /* ignore */ }
   }, []);
 
+  // Auto-persist trades to localStorage on every state change (catches TP/SL auto-closes too)
+  useEffect(() => {
+    if (trades.length === 0) return;
+    try { localStorage.setItem('4scans-trades', JSON.stringify(trades)); } catch { /* ignore */ }
+  }, [trades]);
+
   // Once syncKey is ready, load from Supabase and merge
   useEffect(() => {
     if (!syncKey) return;
@@ -2387,7 +2393,17 @@ export default function Home() {
                 {(() => {
                   const allTrades = trades;
                   const closed = allTrades.filter(t => t.status !== 'open');
-                  const totalPnl = allTrades.reduce((s, t) => s + (t.pnlDollars ?? 0), 0);
+                  // Realized P&L: sum of closed trade pnlDollars
+                  const realizedPnl = closed.reduce((s, t) => s + (t.pnlDollars ?? 0), 0);
+                  // Unrealized P&L: live price vs entry for open trades
+                  const unrealizedPnl = allTrades
+                    .filter(t => t.status === 'open')
+                    .reduce((s, t) => {
+                      const lp = livePrices[t.symbol]?.price;
+                      if (!lp || !t.qty) return s;
+                      return s + t.qty * (lp - t.entry) * (t.direction === 'LONG' ? 1 : -1);
+                    }, 0);
+                  const totalPnl = realizedPnl + unrealizedPnl;
                   const openCount = allTrades.filter(t => t.status === 'open').length;
                   // Tiered TP rates: count any trade (open or closed) that hit each milestone
                   const n = allTrades.length;
@@ -2404,7 +2420,7 @@ export default function Home() {
                           { label: 'Total', value: n, color: 'var(--c-text)' },
                           { label: 'Open', value: openCount, color: '#6366f1' },
                           { label: 'Closed', value: closed.length, color: 'var(--c-muted)' },
-                          { label: 'Net P&L', value: `$${totalPnl.toFixed(0)}`, color: totalPnl >= 0 ? '#22c55e' : '#ef4444' },
+                          { label: openCount > 0 ? 'Net P&L (live)' : 'Net P&L', value: `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(0)}`, color: totalPnl >= 0 ? '#22c55e' : '#ef4444' },
                         ].map(({ label, value, color }) => (
                           <div key={label} style={{ padding: '10px 12px', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 8, textAlign: 'center' }}>
                             <div style={{ color: 'var(--c-faint)', fontSize: 11 }}>{label}</div>
