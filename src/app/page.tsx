@@ -2351,61 +2351,77 @@ export default function Home() {
                         {isExpanded && (
                           <div style={{ background: 'var(--c-inner)', borderRadius: 8, padding: '12px 12px 10px', border: `1px solid ${dirColor}22` }}>
 
-                            {/* Key levels grid */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 7, marginBottom: 10 }}>
-                              <div style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: `1px solid ${dirColor}33` }}>
-                                <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>ENTRY ZONE</div>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: dirColor }}>${fmt(sp.entryLow)}</div>
-                                <div style={{ fontSize: 10, color: 'var(--c-faint)' }}>to ${fmt(sp.entryHigh)}</div>
-                                <div style={{ fontSize: 10, color: statusColor, fontWeight: 700, marginTop: 2 }}>{statusLabel}</div>
-                              </div>
-                              <div style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: '1px solid #ef444433' }}>
-                                <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>STOP LOSS</div>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#ef4444' }}>${fmt(sp.stopLoss)}</div>
-                                <div style={{ fontSize: 10, color: 'var(--c-faint)' }}>
-                                  {((Math.abs(sp.entryPrice - sp.stopLoss) / sp.entryPrice) * 100).toFixed(2)}% from entry
+                            {/* Exact entry + SL + R:R */}
+                            <div style={{ marginBottom: 10 }}>
+                              {/* Limit entry — full width, prominent */}
+                              <div style={{ padding: '10px 12px', background: 'var(--c-card)', borderRadius: 7, border: `2px solid ${dirColor}55`, marginBottom: 7 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                  <div>
+                                    <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3, letterSpacing: '0.07em' }}>LIMIT ENTRY (EXACT)</div>
+                                    <div style={{ fontSize: 18, fontWeight: 800, color: dirColor, letterSpacing: '-0.5px' }}>${fmt(sp.entryPrice)}</div>
+                                    <div style={{ fontSize: 10, color: 'var(--c-faintest)', marginTop: 2 }}>Zone: ${fmt(sp.entryLow)} – ${fmt(sp.entryHigh)}</div>
+                                  </div>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <div style={{ padding: '3px 10px', borderRadius: 5, fontSize: 11, fontWeight: 700, background: `${statusColor}22`, color: statusColor, border: `1px solid ${statusColor}44` }}>{statusLabel}</div>
+                                    <div style={{ fontSize: 10, color: 'var(--c-faintest)', marginTop: 4 }}>Set limit order here</div>
+                                  </div>
                                 </div>
                               </div>
-                              <div style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: '1px solid #6366f133' }}>
-                                <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>R:R RATIO</div>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: sp.rrRatio >= 2 ? '#22c55e' : '#eab308' }}>{sp.rrRatio}:1</div>
-                                <div style={{ fontSize: 10, color: 'var(--c-faint)' }}>to TP2</div>
+                              {/* SL + R:R */}
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
+                                <div style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: '1px solid #ef444444' }}>
+                                  <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>STOP LOSS — HARD EXIT</div>
+                                  <div style={{ fontSize: 14, fontWeight: 800, color: '#ef4444' }}>${fmt(sp.stopLoss)}</div>
+                                  <div style={{ fontSize: 10, color: 'var(--c-faint)', marginTop: 1 }}>
+                                    {((Math.abs(sp.entryPrice - sp.stopLoss) / sp.entryPrice) * 100).toFixed(2)}% from entry · Close 100% if hit
+                                  </div>
+                                </div>
+                                <div style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: '1px solid #6366f133' }}>
+                                  <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>R:R RATIO</div>
+                                  <div style={{ fontSize: 14, fontWeight: 800, color: sp.rrRatio >= 2 ? '#22c55e' : '#eab308' }}>{sp.rrRatio}:1</div>
+                                  <div style={{ fontSize: 10, color: 'var(--c-faint)', marginTop: 1 }}>to TP2 · net after fees</div>
+                                </div>
                               </div>
                             </div>
 
-                            {/* TP levels */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 7, marginBottom: 10 }}>
+                            {/* Exit plan — one row per TP with exact action */}
+                            <div style={{ marginBottom: 10 }}>
+                              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.07em', marginBottom: 6 }}>EXIT PLAN</div>
                               {[
-                                { label: 'TP1 · 50%', value: sp.tp1, color: '#4ade80',
-                                  pct: ((Math.abs(sp.tp1 - sp.entryPrice) / sp.entryPrice) * 100).toFixed(1) },
-                                { label: 'TP2 · 25%', value: sp.tp2, color: '#22c55e',
-                                  pct: ((Math.abs(sp.tp2 - sp.entryPrice) / sp.entryPrice) * 100).toFixed(1) },
-                                { label: 'TP3 · 25%', value: sp.tp3, color: '#16a34a',
-                                  pct: ((Math.abs(sp.tp3 - sp.entryPrice) / sp.entryPrice) * 100).toFixed(1) },
-                              ].map(({ label, value, color, pct }) => (
-                                <div key={label} style={{ padding: '8px 10px', background: 'var(--c-card)', borderRadius: 7, border: `1px solid ${color}33` }}>
-                                  <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>{label}</div>
-                                  <div style={{ fontSize: 12, fontWeight: 700, color }}>${fmt(value)}</div>
-                                  <div style={{ fontSize: 10, color: 'var(--c-faint)' }}>+{pct}%</div>
+                                { label: 'TP1', value: sp.tp1, color: '#4ade80', pct: ((Math.abs(sp.tp1 - sp.entryPrice) / sp.entryPrice) * 100).toFixed(1), action: 'Close 50% of position · Move SL to breakeven immediately' },
+                                { label: 'TP2', value: sp.tp2, color: '#22c55e', pct: ((Math.abs(sp.tp2 - sp.entryPrice) / sp.entryPrice) * 100).toFixed(1), action: 'Close 25% more · Trail SL up to TP1 level' },
+                                { label: 'TP3', value: sp.tp3, color: '#16a34a', pct: ((Math.abs(sp.tp3 - sp.entryPrice) / sp.entryPrice) * 100).toFixed(1), action: 'Close remaining 25% · Full exit' },
+                              ].map(({ label, value, color, pct, action }) => (
+                                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', background: 'var(--c-card)', borderRadius: 6, border: `1px solid ${color}33`, marginBottom: 5 }}>
+                                  <div style={{ minWidth: 36, padding: '2px 6px', background: `${color}22`, borderRadius: 4, textAlign: 'center' }}>
+                                    <div style={{ fontSize: 9, fontWeight: 800, color }}>{label}</div>
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                                      <span style={{ fontSize: 13, fontWeight: 700, color }}>${fmt(value)}</span>
+                                      <span style={{ fontSize: 10, color: 'var(--c-faintest)' }}>+{pct}%</span>
+                                    </div>
+                                    <div style={{ fontSize: 10, color: 'var(--c-text)', marginTop: 1, opacity: 0.75 }}>{action}</div>
+                                  </div>
                                 </div>
                               ))}
                             </div>
 
                             {/* Entry logic */}
                             <div style={{ marginBottom: 8 }}>
-                              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.07em', marginBottom: 4 }}>ENTRY LOGIC</div>
+                              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.07em', marginBottom: 4 }}>WHY THIS ENTRY</div>
                               <div style={{ fontSize: 11, color: 'var(--c-text)', lineHeight: 1.55 }}>{sp.entryLogic}</div>
                             </div>
 
                             {/* Timing */}
                             <div style={{ padding: '8px 10px', background: `${dirColor}0d`, borderRadius: 6, border: `1px solid ${dirColor}22` }}>
-                              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.07em', marginBottom: 3 }}>TIMING / TRIGGER</div>
+                              <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.07em', marginBottom: 3 }}>TRIGGER — WAIT FOR THIS BEFORE ENTERING</div>
                               <div style={{ fontSize: 11, color: dirColor, lineHeight: 1.55, fontWeight: 500 }}>{sp.timing}</div>
                             </div>
 
                             {/* ATR reference */}
                             <div style={{ marginTop: 8, fontSize: 10, color: 'var(--c-faintest)' }}>
-                              4H ATR: ${fmt(sp.atr4h)} · Ideal entry: ${fmt(sp.entryPrice)} · All levels from kline snapshot at scan time
+                              4H ATR: ${fmt(sp.atr4h)} · All levels from kline snapshot at scan time
                             </div>
                           </div>
                         )}
