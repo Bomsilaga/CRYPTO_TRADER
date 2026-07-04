@@ -2562,6 +2562,9 @@ export default function Home() {
                   // Tiered TP rates: count any trade (open or closed) that hit each milestone
                   const n = allTrades.length;
                   const slCount  = allTrades.filter(t => t.status === 'sl').length;
+                  const tp1Count = allTrades.filter(t => t.tp1Hit || t.status === 'tp3').length;
+                  const tp2Count = allTrades.filter(t => t.tp2Hit || t.status === 'tp3').length;
+                  const tp3Count = allTrades.filter(t => t.status === 'tp3').length;
                   const tpCount  = allTrades.filter(t => t.tp1Hit || t.tp2Hit || t.tp3Hit || t.status === 'tp3').length;
                   const pct = (c: number) => n ? `${Math.round(c / n * 100)}%` : '—';
                   // Dollar P&L breakdown
@@ -2606,6 +2609,30 @@ export default function Home() {
                             <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>SL Rate</div>
                             <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 15 }}>{pct(slCount)}</div>
                             <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{slCount}/{n}</div>
+                          </div>
+                        </div>
+                      )}
+                      {n > 0 && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                          <div style={{ padding: '8px 10px', background: 'var(--c-card)', border: '1px solid #4ade8033', borderRadius: 8, textAlign: 'center' }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>TP1 Rate</div>
+                            <div style={{ color: '#4ade80', fontWeight: 700, fontSize: 15 }}>{pct(tp1Count)}</div>
+                            <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{tp1Count}/{n}</div>
+                          </div>
+                          <div style={{ padding: '8px 10px', background: 'var(--c-card)', border: '1px solid #22c55e33', borderRadius: 8, textAlign: 'center' }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>TP2 Rate</div>
+                            <div style={{ color: '#22c55e', fontWeight: 700, fontSize: 15 }}>{pct(tp2Count)}</div>
+                            <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{tp2Count}/{n}</div>
+                          </div>
+                          <div style={{ padding: '8px 10px', background: 'var(--c-card)', border: '1px solid #16a34a33', borderRadius: 8, textAlign: 'center' }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>TP3 (Full)</div>
+                            <div style={{ color: '#16a34a', fontWeight: 700, fontSize: 15 }}>{pct(tp3Count)}</div>
+                            <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{tp3Count}/{n}</div>
+                          </div>
+                          <div style={{ padding: '8px 10px', background: 'var(--c-card)', border: '1px solid #f59e0b33', borderRadius: 8, textAlign: 'center' }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>Any TP</div>
+                            <div style={{ color: '#f59e0b', fontWeight: 700, fontSize: 15 }}>{pct(tpCount)}</div>
+                            <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{tpCount}/{n}</div>
                           </div>
                         </div>
                       )}
