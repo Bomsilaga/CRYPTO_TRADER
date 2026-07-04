@@ -17,7 +17,17 @@ function buildPrompt(body: Record<string, unknown>): string {
     btcDeep?: { rsi: number; wyckoffPhase: string; macdBull: boolean; macdBear: boolean; vwapAbove: boolean; volRatio: number };
   };
 
-  const slPct = (Math.abs(masterSignal.entry - masterSignal.stopLoss) / masterSignal.entry * 100).toFixed(2);
+  const entry = masterSignal.entry;
+  const f = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
+  const slDist = Math.abs(entry - masterSignal.stopLoss);
+  const tp1Dist = Math.abs(masterSignal.tp1 - entry);
+  const tp2Dist = Math.abs(masterSignal.tp2 - entry);
+  const tp3Dist = Math.abs(masterSignal.tp3 - entry);
+  const slPct = (slDist / entry * 100).toFixed(2);
+
+  // Compute both-direction levels (symmetric around entry — same ATR-based distances)
+  const longLevels = { sl: f(entry - slDist), tp1: f(entry + tp1Dist), tp2: f(entry + tp2Dist), tp3: f(entry + tp3Dist) };
+  const shortLevels = { sl: f(entry + slDist), tp1: f(entry - tp1Dist), tp2: f(entry - tp2Dist), tp3: f(entry - tp3Dist) };
 
   const btcAligned = !btcDirection || btcDirection === 'NEUTRAL' || btcDirection === direction;
   const btcSection = btcDirection && btcDeep ? `
@@ -27,45 +37,53 @@ BTC RSI: ${btcDeep.rsi.toFixed(1)}${btcDeep.rsi > 70 ? ' (OVERBOUGHT)' : btcDeep
 BTC MACD: ${btcDeep.macdBull ? 'Bullish' : btcDeep.macdBear ? 'Bearish' : 'Neutral'} | BTC VWAP: price ${btcDeep.vwapAbove ? 'ABOVE' : 'BELOW'} | BTC Vol: ${btcDeep.volRatio.toFixed(2)}× avg
 BTC Alignment: ${btcAligned ? '✓ ALIGNED — macro supports this trade' : '⚠ DIVERGING — BTC trending opposite, increased risk'}` : '';
 
-  return `You are a professional ICT (Inner Circle Trader) and Wyckoff methodology expert. Analyse this signal and give a clear, actionable deep explanation for a trader with $2,000 capital.
+  return `You are a professional ICT (Inner Circle Trader) and Wyckoff methodology expert. Analyse this signal for BOTH LONG and SHORT directions and give actionable guidance for a trader with $2,000 capital.
 
-SIGNAL:
-Symbol: ${symbol} PERP | Price: $${price} | Direction: ${direction}
-Score: ${totalScore}/100 | Confidence: ${confidence}% | Setup: ${bestSetup}
+SYMBOL: ${symbol} PERP | Current Price: $${f(entry)}
+Engine Bias: ${direction} (Score: ${totalScore}/100 · Confidence: ${confidence}% · Setup: ${bestSetup})
 Alignment: ${alignmentScore}% across 6 timeframes (${alignmentQuality})
 
-TRADE LEVELS:
-Entry: $${masterSignal.entry} | SL: $${masterSignal.stopLoss} (${slPct}% away)
-TP1 50%: $${masterSignal.tp1} | TP2 25%: $${masterSignal.tp2} | TP3 25%: $${masterSignal.tp3}
-Net R:R: ${masterSignal.netRR}× | Engine leverage rec: ${masterSignal.leverage}× (cap at 5× regardless)
+LONG SIGNAL LEVELS:
+Entry: $${f(entry)} | SL: $${longLevels.sl} (−${slPct}%) | Net R:R: ${masterSignal.netRR}×
+TP1 50%: $${longLevels.tp1} | TP2 25%: $${longLevels.tp2} | TP3 25%: $${longLevels.tp3}
 
-STRUCTURE:
+SHORT SIGNAL LEVELS:
+Entry: $${f(entry)} | SL: $${shortLevels.sl} (+${slPct}%) | Net R:R: ${masterSignal.netRR}×
+TP1 50%: $${shortLevels.tp1} | TP2 25%: $${shortLevels.tp2} | TP3 25%: $${shortLevels.tp3}
+
+STRUCTURE (supports or opposes each direction):
 BOS: ${deep.hasBOS ? 'YES' : 'NO'} | OB: ${deep.hasOB ? 'YES' : 'NO'} | FVG: ${deep.hasFVG ? 'YES' : 'NO'}
 CHoCH: ${deep.hasChoCH ? 'YES' : 'NO'} | Sweep: ${deep.hasSweep ? 'YES' : 'NO'}
-MACD: ${deep.macdBull ? 'Bullish' : deep.macdBear ? 'Bearish' : 'Neutral'}
-VWAP: price ${deep.vwapAbove ? 'ABOVE' : 'BELOW'} | Volume: ${deep.volRatio.toFixed(2)}× avg
-RSI: ${deep.rsi.toFixed(1)}${deep.rsi > 70 ? ' (OVERBOUGHT)' : deep.rsi < 30 ? ' (OVERSOLD)' : ''}
+MACD: ${deep.macdBull ? 'Bullish ✓LONG' : deep.macdBear ? 'Bearish ✓SHORT' : 'Neutral'}
+VWAP: price ${deep.vwapAbove ? 'ABOVE (favours LONG)' : 'BELOW (favours SHORT)'}
+Volume: ${deep.volRatio.toFixed(2)}× avg | RSI: ${deep.rsi.toFixed(1)}${deep.rsi > 70 ? ' (OVERBOUGHT — caution LONG)' : deep.rsi < 30 ? ' (OVERSOLD — caution SHORT)' : ''}
 Wyckoff: ${deep.wyckoffPhase}
 ${btcSection}
-Respond in these exact sections (be concise and specific, not generic):
+Respond in these exact sections (concise, specific):
 
-**WHY THIS SETUP**
-Key confluence factors that make this valid — or risks if weak.
+**LONG ANALYSIS**
+Why LONG works or doesn't — which structure confluences support it, what's missing.
+
+**SHORT ANALYSIS**
+Why SHORT works or doesn't — which structure confluences support it, what's missing.
+
+**DIRECTION VERDICT**
+Which direction has stronger confluence RIGHT NOW and exactly why. One paragraph.
 
 **ENTRY TIMING**
-Exactly when to enter. Current price vs entry context. Any required confirmation.
+For the stronger direction: exact trigger to wait for before entering. Current price context.
 
 **RISK BREAKDOWN**
-Dollar figures for $2,000 account at 3× and 5×. What does losing cost?
+Dollar figures for $2,000 account at 3× and 5×. What does losing 1R cost?
 
 **BTC CONTEXT**
-${btcDirection ? `How BTC's ${btcDirection} trend (score ${btcScore}) and ${btcAligned ? 'alignment' : 'divergence'} affects this trade. Specific divergences to note.` : 'BTC data unavailable — assess without macro filter.'}
+${btcDirection ? `BTC is ${btcDirection} (score ${btcScore}). How this affects both LONG and SHORT on this coin specifically.` : 'BTC data unavailable.'}
 
-**WHAT TO WATCH**
-2–3 specific price levels or conditions that would invalidate before entry.
+**WHAT INVALIDATES THE TRADE**
+2–3 specific price levels or candle closes that would cancel the setup entirely.
 
 **VERDICT**
-One clear sentence: Enter now / Wait for pullback / Skip — and exactly why.`;
+One sentence: which direction, enter now or wait, and the single most important condition.`;
 }
 
 async function callClaude(prompt: string, apiKey: string): Promise<string> {

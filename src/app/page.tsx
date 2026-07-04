@@ -1587,6 +1587,83 @@ export default function Home() {
                   </div>
                 </div>
 
+                {/* ── BOTH DIRECTIONS SIGNAL COMPARISON ───────────── */}
+                {(() => {
+                  const ms = result.masterSignal;
+                  const entry = ms.entry;
+                  const fmtP = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
+                  const slDist = Math.abs(entry - ms.stopLoss);
+                  const tp1Dist = Math.abs(ms.tp1 - entry);
+                  const tp2Dist = Math.abs(ms.tp2 - entry);
+                  const tp3Dist = Math.abs(ms.tp3 - entry);
+
+                  const sides = [
+                    {
+                      dir: 'LONG' as const,
+                      color: '#22c55e',
+                      stopLoss: entry - slDist,
+                      tp1: entry + tp1Dist,
+                      tp2: entry + tp2Dist,
+                      tp3: entry + tp3Dist,
+                    },
+                    {
+                      dir: 'SHORT' as const,
+                      color: '#ef4444',
+                      stopLoss: entry + slDist,
+                      tp1: entry - tp1Dist,
+                      tp2: entry - tp2Dist,
+                      tp3: entry - tp3Dist,
+                    },
+                  ];
+
+                  return (
+                    <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: 'var(--c-muted)' }}>SIGNALS — BOTH DIRECTIONS</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {sides.map(({ dir, color, stopLoss, tp1, tp2, tp3 }) => {
+                          const isPrimary = dir === result.direction;
+                          const slPct = (slDist / entry * 100).toFixed(2);
+                          const tp1Pct = (tp1Dist / entry * 100).toFixed(1);
+                          const tp2Pct = (tp2Dist / entry * 100).toFixed(1);
+                          const tp3Pct = (tp3Dist / entry * 100).toFixed(1);
+                          return (
+                            <div key={dir} style={{
+                              padding: '10px 12px', borderRadius: 8,
+                              border: `${isPrimary ? 2 : 1}px solid ${isPrimary ? color + '66' : color + '22'}`,
+                              background: isPrimary ? `${color}08` : 'var(--c-inner)',
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                                <span style={{ padding: '2px 10px', borderRadius: 4, fontWeight: 800, fontSize: 12, background: `${color}22`, color, border: `1px solid ${color}44` }}>
+                                  {dir === 'LONG' ? '▲' : '▼'} {dir}
+                                </span>
+                                {isPrimary && <span style={{ fontSize: 9, color, fontWeight: 700, letterSpacing: '0.06em' }}>ENGINE BIAS</span>}
+                              </div>
+                              {[
+                                { label: 'Entry', value: entry, pct: null as string | null, c: 'var(--c-text)' },
+                                { label: 'Stop Loss', value: stopLoss, pct: `-${slPct}%`, c: '#ef4444' },
+                                { label: 'TP1 · 50%', value: tp1, pct: `+${tp1Pct}%`, c: '#4ade80' },
+                                { label: 'TP2 · 25%', value: tp2, pct: `+${tp2Pct}%`, c: '#22c55e' },
+                                { label: 'TP3 · 25%', value: tp3, pct: `+${tp3Pct}%`, c: '#16a34a' },
+                              ].map(({ label, value, pct, c }) => (
+                                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5, fontSize: 11 }}>
+                                  <span style={{ color: 'var(--c-faint)' }}>{label}</span>
+                                  <span style={{ fontWeight: 700, color: c }}>
+                                    ${fmtP(value)}{pct && <span style={{ fontWeight: 400, color: 'var(--c-faintest)', marginLeft: 4, fontSize: 10 }}>{pct}</span>}
+                                  </span>
+                                </div>
+                              ))}
+                              <div style={{ borderTop: '1px solid var(--c-border)', marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                                <span style={{ color: 'var(--c-faint)' }}>Net R:R</span>
+                                <span style={{ fontWeight: 700, color: ms.netRR >= 2 ? '#22c55e' : '#eab308' }}>{ms.netRR.toFixed(2)}×</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* BTC Trend Comparison */}
                 {btcResult?.ok && (
                   (() => {
