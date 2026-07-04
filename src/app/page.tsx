@@ -2468,14 +2468,16 @@ export default function Home() {
                   const openCount = allTrades.filter(t => t.status === 'open').length;
                   // Tiered TP rates: count any trade (open or closed) that hit each milestone
                   const n = allTrades.length;
-                  const tp1Count = allTrades.filter(t => t.tp1Hit || t.status === 'tp3').length;
-                  const tp2Count = allTrades.filter(t => t.tp2Hit || t.status === 'tp3').length;
-                  const tp3Count = allTrades.filter(t => t.status === 'tp3').length;
                   const slCount  = allTrades.filter(t => t.status === 'sl').length;
+                  const tpCount  = allTrades.filter(t => t.tp1Hit || t.tp2Hit || t.tp3Hit || t.status === 'tp3').length;
                   const pct = (c: number) => n ? `${Math.round(c / n * 100)}%` : '—';
+                  // Dollar P&L breakdown
+                  const tpGains  = allTrades.filter(t => (t.pnlDollars ?? 0) > 0).reduce((s, t) => s + (t.pnlDollars ?? 0), 0);
+                  const slLosses = allTrades.filter(t => t.status === 'sl').reduce((s, t) => s + (t.pnlDollars ?? 0), 0);
+                  const winRate  = closed.length > 0 ? Math.round(closed.filter(t => (t.pnlDollars ?? 0) > 0).length / closed.length * 100) : null;
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {/* Top row: totals */}
+                      {/* Top row: counts + net P&L */}
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
                         {[
                           { label: 'Total', value: n, color: 'var(--c-text)' },
@@ -2489,21 +2491,29 @@ export default function Home() {
                           </div>
                         ))}
                       </div>
-                      {/* Tiered TP stats */}
+                      {/* P&L breakdown: TP gains / SL losses / win rate / TP rate */}
                       {n > 0 && (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-                          {[
-                            { label: 'TP1 Rate', value: pct(tp1Count), sub: `${tp1Count}/${n}`, color: '#4ade80' },
-                            { label: 'TP2 Rate', value: pct(tp2Count), sub: `${tp2Count}/${n}`, color: '#22c55e' },
-                            { label: 'TP3 (Full)', value: pct(tp3Count), sub: `${tp3Count}/${n}`, color: '#16a34a' },
-                            { label: 'SL Rate', value: pct(slCount), sub: `${slCount}/${n}`, color: '#ef4444' },
-                          ].map(({ label, value, sub, color }) => (
-                            <div key={label} style={{ padding: '8px 10px', background: 'var(--c-card)', border: `1px solid ${color}33`, borderRadius: 8, textAlign: 'center' }}>
-                              <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>{label}</div>
-                              <div style={{ color, fontWeight: 700, fontSize: 15 }}>{value}</div>
-                              <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{sub}</div>
-                            </div>
-                          ))}
+                          <div style={{ padding: '8px 10px', background: 'var(--c-card)', border: '1px solid #22c55e33', borderRadius: 8, textAlign: 'center' }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>TP Gains</div>
+                            <div style={{ color: '#22c55e', fontWeight: 700, fontSize: 15 }}>{tpGains > 0 ? `+$${tpGains.toFixed(0)}` : '—'}</div>
+                            <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{pct(tpCount)} hit TP</div>
+                          </div>
+                          <div style={{ padding: '8px 10px', background: 'var(--c-card)', border: '1px solid #ef444433', borderRadius: 8, textAlign: 'center' }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>SL Losses</div>
+                            <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 15 }}>{slLosses < 0 ? `-$${Math.abs(slLosses).toFixed(0)}` : slLosses === 0 && slCount === 0 ? '—' : `$${slLosses.toFixed(0)}`}</div>
+                            <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{slCount} SL{slCount !== 1 ? 's' : ''} hit</div>
+                          </div>
+                          <div style={{ padding: '8px 10px', background: 'var(--c-card)', border: `1px solid ${winRate !== null && winRate >= 50 ? '#22c55e33' : '#ef444433'}`, borderRadius: 8, textAlign: 'center' }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>Win Rate</div>
+                            <div style={{ color: winRate !== null && winRate >= 50 ? '#22c55e' : '#ef4444', fontWeight: 700, fontSize: 15 }}>{winRate !== null ? `${winRate}%` : '—'}</div>
+                            <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{closed.length} closed</div>
+                          </div>
+                          <div style={{ padding: '8px 10px', background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 8, textAlign: 'center' }}>
+                            <div style={{ color: 'var(--c-faint)', fontSize: 10 }}>SL Rate</div>
+                            <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 15 }}>{pct(slCount)}</div>
+                            <div style={{ color: 'var(--c-faintest)', fontSize: 10 }}>{slCount}/{n}</div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2603,6 +2613,50 @@ export default function Home() {
                           {t.tp1Hit && <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#4ade8022', color: '#4ade80', border: '1px solid #4ade8044' }}>✓ TP1</span>}
                           {t.tp2Hit && <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#22c55e22', color: '#22c55e', border: '1px solid #22c55e44' }}>✓ TP2</span>}
                           {t.tp3Hit && <span style={{ padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 700, background: '#16a34a22', color: '#16a34a', border: '1px solid #16a34a44' }}>✓ TP3 FULL</span>}
+                        </div>
+                      )}
+
+                      {/* Realized P&L block for closed trades */}
+                      {!isOpen && (
+                        <div style={{ marginBottom: 10 }}>
+                          {(() => {
+                            const pnl = t.pnlDollars;
+                            const rMultiple = pnl != null && riskAmt > 0 ? pnl / riskAmt : null;
+                            const pnlColor = pnl == null ? 'var(--c-faint)' : pnl >= 0 ? '#22c55e' : '#ef4444';
+                            const exitPriceFmt = t.exitPrice != null
+                              ? `$${t.exitPrice.toFixed(t.exitPrice < 1 ? 6 : t.exitPrice < 100 ? 4 : 2)}`
+                              : '—';
+                            const exitPct = t.exitPrice != null
+                              ? ((t.exitPrice - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1))
+                              : null;
+                            return (
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
+                                <div style={{ padding: '10px 12px', background: pnl != null ? `${pnlColor}18` : 'var(--c-inner)', border: `1px solid ${pnl != null ? `${pnlColor}44` : 'transparent'}`, borderRadius: 8, gridColumn: '1 / -1' }}>
+                                  <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 3 }}>REALIZED P&L</div>
+                                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: 22, fontWeight: 800, color: pnlColor, letterSpacing: '-0.5px' }}>
+                                      {pnl != null ? `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}` : '—'}
+                                    </span>
+                                    {rMultiple != null && (
+                                      <span style={{ fontSize: 13, fontWeight: 700, color: pnlColor, opacity: 0.85 }}>
+                                        {rMultiple >= 0 ? '+' : ''}{rMultiple.toFixed(2)}R
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div style={{ padding: '8px 10px', background: 'var(--c-inner)', borderRadius: 8 }}>
+                                  <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 2 }}>EXIT PRICE</div>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--c-text)' }}>{exitPriceFmt}</div>
+                                  {exitPct != null && <div style={{ fontSize: 9, color: pnlColor, marginTop: 1 }}>{exitPct >= 0 ? '+' : ''}{exitPct.toFixed(2)}% from entry</div>}
+                                </div>
+                                <div style={{ padding: '8px 10px', background: 'var(--c-inner)', borderRadius: 8 }}>
+                                  <div style={{ fontSize: 9, color: 'var(--c-faint)', marginBottom: 2 }}>RESULT</div>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: statusColor[t.status] }}>{t.status === 'tp3' ? 'TP3 Full' : t.status === 'sl' ? 'Stop Loss' : 'Manual'}</div>
+                                  <div style={{ fontSize: 9, color: 'var(--c-faintest)', marginTop: 1 }}>Risk {t.riskPct}% · R:R {t.netRR.toFixed(2)}×</div>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
 
@@ -2796,13 +2850,8 @@ export default function Home() {
 
                       <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--c-faint)', marginBottom: isOpen ? 10 : 0, flexWrap: 'wrap' }}>
                         <span>Score {t.score}/100</span>
-                        <span>R:R {t.netRR.toFixed(2)}×</span>
-                        <span>Risk {t.riskPct}%</span>
-                        {!isOpen && t.pnlDollars !== undefined && (
-                          <span style={{ color: t.pnlDollars >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>
-                            {t.pnlDollars >= 0 ? '+' : ''}${t.pnlDollars.toFixed(2)}
-                          </span>
-                        )}
+                        {isOpen && <span>R:R {t.netRR.toFixed(2)}×</span>}
+                        {isOpen && <span>Risk {t.riskPct}%</span>}
                         <span style={{ marginLeft: 'auto' }}>
                           {t.timestamp}{t.timezone ? ` ${t.timezone}` : ''}
                         </span>
