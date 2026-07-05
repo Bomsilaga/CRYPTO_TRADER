@@ -3297,59 +3297,75 @@ export default function Home() {
                       })()}
                     </div>
 
-                    {/* ── Hourly H/L table (collapsed by default) ─── */}
-                    {(t.hourlyCandles?.length ?? 0) > 0 && (
-                      <div style={{ marginBottom: 14 }}>
-                        <button
-                          onClick={() => setHlExpanded(prev => {
-                            const next = new Set(prev);
-                            if (next.has(t.id)) next.delete(t.id); else next.add(t.id);
-                            return next;
-                          })}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-                            background: 'none', border: '1px solid var(--c-border)', borderRadius: 6,
-                            padding: '6px 10px', cursor: 'pointer', color: 'var(--c-dim)',
-                            fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
-                          }}
-                        >
-                          <span style={{ fontSize: 10, color: 'var(--c-faintest)' }}>{hlExpanded.has(t.id) ? '▾' : '▸'}</span>
-                          HOURLY H/L LOG — {t.hourlyCandles!.length} candle{t.hourlyCandles!.length !== 1 ? 's' : ''}
-                          <span style={{ marginLeft: 'auto', fontWeight: 400, fontSize: 10, color: 'var(--c-faintest)' }}>
-                            {hlExpanded.has(t.id) ? 'collapse' : 'expand'}
-                          </span>
-                        </button>
-                        {hlExpanded.has(t.id) && (
-                          <div style={{ overflowX: 'auto', marginTop: 6 }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                              <thead>
-                                <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
-                                  {['Hour (UTC)', 'Open', 'High', 'Low', 'Close', 'Δ Entry'].map(h => (
-                                    <th key={h} style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--c-dim)', fontWeight: 700, fontSize: 10, ...(h === 'Hour (UTC)' ? { textAlign: 'left' } : {}) }}>{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {[...t.hourlyCandles!].reverse().slice(0, 24).map((c, i) => {
-                                  const delta = (c.close - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1);
-                                  const isGreen = c.close >= c.open;
-                                  return (
-                                    <tr key={i} style={{ borderBottom: '1px solid var(--c-border)', background: i % 2 === 0 ? 'transparent' : 'var(--c-inner)' }}>
-                                      <td style={{ padding: '5px 8px', color: 'var(--c-faint)', fontFamily: 'monospace' }}>{c.hour.slice(11, 16)}</td>
-                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--c-muted)' }}>${fmtP(c.open)}</td>
-                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: '#22c55e', fontWeight: 700 }}>${fmtP(c.high)}</td>
-                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: '#ef4444', fontWeight: 700 }}>${fmtP(c.low)}</td>
-                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: isGreen ? '#22c55e' : '#ef4444', fontWeight: 600 }}>${fmtP(c.close)}</td>
-                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: delta >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>{delta >= 0 ? '+' : ''}{delta.toFixed(2)}%</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    {/* ── Hourly H/L table — Melbourne time, 24h, collapsed by default ─── */}
+                    {(t.hourlyCandles?.length ?? 0) > 0 && (() => {
+                      const melTime = (iso: string) => new Date(iso).toLocaleString('en-AU', { timeZone: 'Australia/Melbourne', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+                      const last24 = [...t.hourlyCandles!].reverse().slice(0, 24);
+                      const allHighs = last24.map(c => c.high);
+                      const allLows  = last24.map(c => c.low);
+                      const logHigh  = Math.max(...allHighs);
+                      const logLow   = Math.min(...allLows);
+                      return (
+                        <div style={{ marginBottom: 14 }}>
+                          <button
+                            onClick={() => setHlExpanded(prev => {
+                              const next = new Set(prev);
+                              if (next.has(t.id)) next.delete(t.id); else next.add(t.id);
+                              return next;
+                            })}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                              background: 'none', border: '1px solid var(--c-border)', borderRadius: 6,
+                              padding: '7px 10px', cursor: 'pointer', color: 'var(--c-dim)',
+                              fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
+                            }}
+                          >
+                            <span style={{ fontSize: 10, color: 'var(--c-faintest)' }}>{hlExpanded.has(t.id) ? '▾' : '▸'}</span>
+                            <span>24H LOG (MEL)</span>
+                            <span style={{ color: '#22c55e', marginLeft: 4 }}>H ${fmtP(logHigh)}</span>
+                            <span style={{ color: '#ef4444', marginLeft: 4 }}>L ${fmtP(logLow)}</span>
+                            <span style={{ marginLeft: 'auto', fontWeight: 400, color: 'var(--c-faintest)' }}>
+                              {last24.length}h · {hlExpanded.has(t.id) ? 'collapse' : 'expand'}
+                            </span>
+                          </button>
+                          {hlExpanded.has(t.id) && (
+                            <div style={{ overflowX: 'auto', marginTop: 6 }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                                <thead>
+                                  <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
+                                    {['Time (MEL)', 'Open', 'High', 'Low', 'Close', 'Δ Entry'].map(h => (
+                                      <th key={h} style={{ padding: '5px 8px', textAlign: h === 'Time (MEL)' ? 'left' : 'right', color: 'var(--c-dim)', fontWeight: 700, fontSize: 10 }}>{h}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {last24.map((c, i) => {
+                                    const delta = (c.close - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1);
+                                    const isGreen = c.close >= c.open;
+                                    const isLogHigh = c.high === logHigh;
+                                    const isLogLow  = c.low  === logLow;
+                                    return (
+                                      <tr key={i} style={{ borderBottom: '1px solid var(--c-border)', background: i % 2 === 0 ? 'transparent' : 'var(--c-inner)' }}>
+                                        <td style={{ padding: '5px 8px', color: 'var(--c-faint)', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{melTime(c.hour)}</td>
+                                        <td style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--c-muted)' }}>${fmtP(c.open)}</td>
+                                        <td style={{ padding: '5px 8px', textAlign: 'right', color: '#22c55e', fontWeight: isLogHigh ? 800 : 600 }}>
+                                          {isLogHigh ? '★ ' : ''}{fmtP(c.high)}
+                                        </td>
+                                        <td style={{ padding: '5px 8px', textAlign: 'right', color: '#ef4444', fontWeight: isLogLow ? 800 : 600 }}>
+                                          {isLogLow ? '★ ' : ''}{fmtP(c.low)}
+                                        </td>
+                                        <td style={{ padding: '5px 8px', textAlign: 'right', color: isGreen ? '#22c55e' : '#ef4444', fontWeight: 600 }}>${fmtP(c.close)}</td>
+                                        <td style={{ padding: '5px 8px', textAlign: 'right', color: delta >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>{delta >= 0 ? '+' : ''}{delta.toFixed(2)}%</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {/* ── Notes ─── */}
                     <div style={{ marginBottom: 14 }}>
