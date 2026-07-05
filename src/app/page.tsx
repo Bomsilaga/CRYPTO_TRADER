@@ -495,6 +495,7 @@ export default function Home() {
   const [marketScanning, setMarketScanning] = useState(false);
   const [marketProgress, setMarketProgress] = useState(0);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [hlExpanded, setHlExpanded] = useState<Set<string>>(new Set());
 
   // Settings state
   const [apiKey, setApiKey] = useState('');
@@ -3291,39 +3292,57 @@ export default function Home() {
                       })()}
                     </div>
 
-                    {/* ── Hourly H/L table ─── */}
+                    {/* ── Hourly H/L table (collapsed by default) ─── */}
                     {(t.hourlyCandles?.length ?? 0) > 0 && (
                       <div style={{ marginBottom: 14 }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--c-dim)', letterSpacing: '0.08em', marginBottom: 8 }}>
-                          HOURLY H/L ({t.hourlyCandles!.length} candles)
-                        </div>
-                        <div style={{ overflowX: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                            <thead>
-                              <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
-                                {['Hour (UTC)', 'Open', 'High', 'Low', 'Close', 'Δ Entry'].map(h => (
-                                  <th key={h} style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--c-dim)', fontWeight: 700, fontSize: 10, ...(h === 'Hour (UTC)' ? { textAlign: 'left' } : {}) }}>{h}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {[...t.hourlyCandles!].reverse().slice(0, 24).map((c, i) => {
-                                const delta = (c.close - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1);
-                                const isGreen = c.close >= c.open;
-                                return (
-                                  <tr key={i} style={{ borderBottom: '1px solid var(--c-border)', background: i % 2 === 0 ? 'transparent' : 'var(--c-inner)' }}>
-                                    <td style={{ padding: '5px 8px', color: 'var(--c-faint)', fontFamily: 'monospace' }}>{c.hour.slice(11, 16)}</td>
-                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--c-muted)' }}>${fmtP(c.open)}</td>
-                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: '#22c55e', fontWeight: 700 }}>${fmtP(c.high)}</td>
-                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: '#ef4444', fontWeight: 700 }}>${fmtP(c.low)}</td>
-                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: isGreen ? '#22c55e' : '#ef4444', fontWeight: 600 }}>${fmtP(c.close)}</td>
-                                    <td style={{ padding: '5px 8px', textAlign: 'right', color: delta >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>{delta >= 0 ? '+' : ''}{delta.toFixed(2)}%</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
+                        <button
+                          onClick={() => setHlExpanded(prev => {
+                            const next = new Set(prev);
+                            if (next.has(t.id)) next.delete(t.id); else next.add(t.id);
+                            return next;
+                          })}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                            background: 'none', border: '1px solid var(--c-border)', borderRadius: 6,
+                            padding: '6px 10px', cursor: 'pointer', color: 'var(--c-dim)',
+                            fontSize: 10, fontWeight: 700, letterSpacing: '0.08em',
+                          }}
+                        >
+                          <span style={{ fontSize: 10, color: 'var(--c-faintest)' }}>{hlExpanded.has(t.id) ? '▾' : '▸'}</span>
+                          HOURLY H/L LOG — {t.hourlyCandles!.length} candle{t.hourlyCandles!.length !== 1 ? 's' : ''}
+                          <span style={{ marginLeft: 'auto', fontWeight: 400, fontSize: 10, color: 'var(--c-faintest)' }}>
+                            {hlExpanded.has(t.id) ? 'collapse' : 'expand'}
+                          </span>
+                        </button>
+                        {hlExpanded.has(t.id) && (
+                          <div style={{ overflowX: 'auto', marginTop: 6 }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                              <thead>
+                                <tr style={{ borderBottom: '1px solid var(--c-border)' }}>
+                                  {['Hour (UTC)', 'Open', 'High', 'Low', 'Close', 'Δ Entry'].map(h => (
+                                    <th key={h} style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--c-dim)', fontWeight: 700, fontSize: 10, ...(h === 'Hour (UTC)' ? { textAlign: 'left' } : {}) }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {[...t.hourlyCandles!].reverse().slice(0, 24).map((c, i) => {
+                                  const delta = (c.close - t.entry) / t.entry * 100 * (t.direction === 'LONG' ? 1 : -1);
+                                  const isGreen = c.close >= c.open;
+                                  return (
+                                    <tr key={i} style={{ borderBottom: '1px solid var(--c-border)', background: i % 2 === 0 ? 'transparent' : 'var(--c-inner)' }}>
+                                      <td style={{ padding: '5px 8px', color: 'var(--c-faint)', fontFamily: 'monospace' }}>{c.hour.slice(11, 16)}</td>
+                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: 'var(--c-muted)' }}>${fmtP(c.open)}</td>
+                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: '#22c55e', fontWeight: 700 }}>${fmtP(c.high)}</td>
+                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: '#ef4444', fontWeight: 700 }}>${fmtP(c.low)}</td>
+                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: isGreen ? '#22c55e' : '#ef4444', fontWeight: 600 }}>${fmtP(c.close)}</td>
+                                      <td style={{ padding: '5px 8px', textAlign: 'right', color: delta >= 0 ? '#22c55e' : '#ef4444', fontWeight: 700 }}>{delta >= 0 ? '+' : ''}{delta.toFixed(2)}%</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
                     )}
 
