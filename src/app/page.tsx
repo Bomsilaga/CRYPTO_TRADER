@@ -496,6 +496,7 @@ export default function Home() {
   const [marketProgress, setMarketProgress] = useState(0);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [hlExpanded, setHlExpanded] = useState<Set<string>>(new Set());
+  const [expandedTrades, setExpandedTrades] = useState<Set<string>>(new Set());
 
   // Settings state
   const [apiKey, setApiKey] = useState('');
@@ -3082,9 +3083,13 @@ export default function Home() {
               return (
                 <div key={t.id} style={{ background: 'var(--c-card)', border: `1px solid var(--c-border)`, borderLeft: `4px solid ${dirColor}`, borderRadius: 10, overflow: 'hidden' }}>
 
-                  {/* ── Card header ─── */}
-                  <div style={{ padding: '12px 14px', borderBottom: `1px solid var(--c-border)`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                  {/* ── Card header — click to expand/collapse ─── */}
+                  <div
+                    onClick={() => setExpandedTrades(prev => { const next = new Set(prev); if (next.has(t.id)) next.delete(t.id); else next.add(t.id); return next; })}
+                    style={{ padding: '12px 14px', borderBottom: expandedTrades.has(t.id) ? `1px solid var(--c-border)` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, cursor: 'pointer', userSelect: 'none' }}
+                  >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 11, color: 'var(--c-faintest)', marginRight: 2 }}>{expandedTrades.has(t.id) ? '▾' : '▸'}</span>
                       <span style={{ fontWeight: 800, fontSize: 16, color: 'var(--c-text)' }}>{t.symbol}</span>
                       <span style={{ padding: '2px 9px', borderRadius: 5, fontSize: 12, fontWeight: 700, background: `${dirColor}22`, color: dirColor }}>
                         {t.direction === 'LONG' ? '▲ LONG' : '▼ SHORT'}
@@ -3114,7 +3119,7 @@ export default function Home() {
                     <span style={{ fontSize: 11, color: 'var(--c-faintest)' }}>{t.timestamp} {t.timezone}</span>
                   </div>
 
-                  <div style={{ padding: '14px 14px 0' }}>
+                  {expandedTrades.has(t.id) && <div style={{ padding: '14px 14px 0' }}>
 
                     {/* ── Analysis snapshot ─── */}
                     {fa && (
@@ -3362,7 +3367,7 @@ export default function Home() {
                       />
                     </div>
 
-                  </div>{/* end padded body */}
+                  </div>}{/* end padded body */}
                 </div>
               );
             })}
