@@ -190,6 +190,18 @@ export function detectBOS(candles: RawCandle[]): boolean {
   return recentClose > prevHigh || recentClose < prevLow;
 }
 
+// Direction-confirmed BOS: only true when the break matches the trade direction
+export function detectDirectionalBOS(candles: RawCandle[], direction: 'LONG' | 'SHORT'): boolean {
+  if (candles.length < 10) return false;
+  const recent = candles.slice(-10);
+  const prev = candles.slice(-20, -10);
+  if (prev.length < 5) return false;
+  const prevHigh = Math.max(...prev.map(c => c.high));
+  const prevLow  = Math.min(...prev.map(c => c.low));
+  const recentClose = recent[recent.length - 1].close;
+  return direction === 'LONG' ? recentClose > prevHigh : recentClose < prevLow;
+}
+
 /**
  * FIXED: detectOB (Order Block)
  * ─────────────────────────────

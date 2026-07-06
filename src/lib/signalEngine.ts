@@ -35,7 +35,7 @@ import type { Direction, SetupStyle, StyleSignal, DeepAnalysis, AlignmentQuality
 import {
   rsi, atr, macd, bollingerBands, vwap, poc, volRatio,
   swingHighLow, fibLevels, wyckoffPhase, oteZone,
-  detectBOS, detectOB, detectFVG, detectChoCH,
+  detectBOS, detectDirectionalBOS, detectOB, detectFVG, detectChoCH,
   detectSweeps, sweepManagementAdvice,
   trendLabel, alignmentScore, structuralAlignmentBonus,
 } from './indicators';
@@ -96,10 +96,13 @@ function calcLeverage(
   return { leverage, leverageOptions, reasoning: reasons.join(' · ') || 'baseline', warning };
 }
 
+// ATR-based TP multiples: TP2 = 2R (2× SL distance) for all styles.
+// Using ATR multiples instead of fixed % ensures TPs scale with actual
+// market volatility — on low-vol assets fixed % TPs were unreachable.
 const STYLE_CFG = {
-  SCALP:    { slMult: 1.3, tpPcts: [0.45, 0.9,  1.48]           },
-  INTRADAY: { slMult: 2.5, tpPcts: [2.27, 3.79,  5.96]          },
-  SWING:    { slMult: 5.0, tpPcts: [5.0,  11.9, 20.1, 29.2]     },
+  SCALP:    { slMult: 1.3, tpMults: [1.3,  2.6,  4.2]           },  // TP2 = 2R
+  INTRADAY: { slMult: 2.0, tpMults: [2.0,  4.0,  6.5]           },  // TP2 = 2R
+  SWING:    { slMult: 3.5, tpMults: [3.5,  7.0, 11.5, 16.0]     },  // TP2 = 2R
 } as const;
 
 export function buildSignalText(
@@ -355,6 +358,23 @@ export function runEngine(
   const macdBear = macdVal.histogram < 0 && macdVal.macdLine < macdVal.signalLine;
   const vwapAbove = price > vwapVal;
 
+  // ── Directional quality signals ──────────────────────────────────────────
+  const isLongDir  = direction === 'LONG';
+  const isShortDir = direction === 'SHORT';
+  const isNeutral  = direction === 'NEUTRAL';
+  // BOS confirmed in the trade direction (not any BOS)
+  const hasBOSDir = isNeutral ? false : detectDirectionalBOS(h1, isLongDir ? 'LONG' : 'SHORT');
+  // Sweep that reversed in trade direction (SSL→LONG, BSL→SHORT)
+  const hasSweepAligned = !isNeutral && sweeps.some(s => s.direction === (isLongDir ? 'LONG' : 'SHORT'));
+  // MACD aligned with direction
+  const macdAligned = isLongDir ? macdBull : (isShortDir ? macdBear : false);
+  // HTF confluence: does 1h and/or 4h agree with direction?
+  const h1Aligns  = !isNeutral && (isLongDir ? (trendMap['1h'] ?? '').includes('UP')   : (trendMap['1h'] ?? '').includes('DOWN'));
+  const h4Aligns  = !isNeutral && (isLongDir ? (trendMap['4h'] ?? '').includes('UP')   : (trendMap['4h'] ?? '').includes('DOWN'));
+  const h4Opposes = !isNeutral && (isLongDir ? (trendMap['4h'] ?? '').includes('DOWN') : (trendMap['4h'] ?? '').includes('UP'));
+  const h1Opposes = !isNeutral && (isLongDir ? (trendMap['1h'] ?? '').includes('DOWN') : (trendMap['1h'] ?? '').includes('UP'));
+  const htfConfirmed = !isNeutral && !h4Opposes && (h1Aligns || h4Aligns);
+
   const recentH1  = h1.slice(-30);
   const midIdx    = Math.floor(recentH1.length / 2);
   const accumPhase = recentH1.slice(0, midIdx);
@@ -377,24 +397,38 @@ export function runEngine(
     sweepManagement: sweepMgmt,
   };
 
-  let score = 0;
-  score += Math.round(effectiveAlign * 0.3); // uses structural alignment bonus
-  if (hasBOS)   score += 15;
-  if (hasOB)    score += 8;  // FIXED: reduced from 12 — OB still has false positive risk
-  if (hasChoCH) score += 8;
-  if (hasFVG)   score += 7;
-  if (hasSweep) score += 6;
-  if (macdBull || macdBear) score += 8;
-  if (vwapAbove === (direction === 'LONG')) score += 5;
-  if (vrVal >= 1.5) score += 5;
   const inOTE = price >= ote.low && price <= ote.high;
-  if (inOTE) score += 4;
-  score = Math.min(100, score);
 
+  let score = 0;
+  // Multi-TF alignment (up to 28 pts)
+  score += Math.round(effectiveAlign * 0.28);
+  // Structure — directional BOS scores higher than any-direction BOS
+  if (hasBOSDir) score += 16;
+  else if (hasBOS) score += 6;
+  if (hasOB)    score += 8;
+  if (hasChoCH) score += 8;
+  if (hasFVG)   score += 6;
+  // Direction-aligned sweep scores full points; opposing sweep barely counts
+  if (hasSweepAligned) score += 10;
+  else if (hasSweep)   score += 3;
+  // Momentum — directional MACD scores higher than just "any MACD activity"
+  if (macdAligned)          score += 8;
+  else if (macdBull || macdBear) score += 2;
+  if (vwapAbove === isLongDir) score += 5;
+  if (vrVal >= 1.5) score += 5;
+  if (inOTE)    score += 4;
+  // HTF headwind penalties — trading against 4h/1h trend is the #1 win-rate killer
+  if (h4Opposes)              score -= 18;
+  if (h1Opposes && h4Opposes) score -= 8;  // both medium TFs against = very bad
+  if (!h1Aligns && !h4Aligns && !isNeutral) score -= 8; // neither HTF confirms
+  score = Math.max(0, Math.min(100, score));
+
+  const structureCount = [hasBOSDir, hasOB, hasFVG, hasChoCH, hasSweepAligned].filter(Boolean).length;
+  const momentumCount  = [macdAligned, vwapAbove === isLongDir, vrVal >= 1.2, htfConfirmed].filter(Boolean).length;
   const confidence = Math.min(100, Math.round(
-    (effectiveAlign * 0.4) +
-    ([hasBOS, hasOB, hasFVG, hasChoCH, hasSweep].filter(Boolean).length / 5) * 30 +
-    ([macdBull || macdBear, vwapAbove === (direction === 'LONG'), vrVal >= 1.2].filter(Boolean).length / 3) * 30
+    (effectiveAlign * 0.35) +
+    (structureCount / 5) * 35 +
+    (momentumCount  / 4) * 30
   ));
 
   const bestSetup: SetupStyle = atrPct < 0.005 ? 'SCALP' : atrPct < 0.015 ? 'INTRADAY' : 'SWING';
@@ -404,8 +438,10 @@ export function runEngine(
     const isLong = direction !== 'SHORT';
     const sl = isLong ? price - atrVal * cfg.slMult : price + atrVal * cfg.slMult;
     const riskPerUnit = Math.abs(price - sl);
-    const tps = cfg.tpPcts.map((pct) =>
-      isLong ? price * (1 + pct / 100) : price * (1 - pct / 100)
+    // ATR-based TPs: each TP = entry ± (ATR × multiplier).
+    // TP2 is always 2R (tpMults[1] / slMult = 2), making TP2 consistently achievable.
+    const tps = cfg.tpMults.map((mult) =>
+      isLong ? price + atrVal * mult : price - atrVal * mult
     );
     const grossRR = riskPerUnit > 0 ? Math.abs(tps[1] - price) / riskPerUnit : 0;
     // FIXED: use corrected FEE_PCT = 0.150
