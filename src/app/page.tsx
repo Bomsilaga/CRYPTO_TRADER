@@ -1,282 +1,440 @@
-'use client';
-
-import { useState } from 'react';
-
-interface ScanResult {
-  ok: boolean;
-  symbol: string;
-  price: number;
-  change24h: number;
-  direction: string;
-  totalScore: number;
-  confidence: number;
-  alignmentScore: number;
-  alignmentQuality: string;
-  bestSetup: string;
-  verdict: string;
-  masterSignal: {
-    entry: number;
-    stopLoss: number;
-    tp1: number;
-    tp2: number;
-    tp3: number;
-    leverage: number;
-    leverageWarning?: string;
-    netRR: number;
-    signalText: string;
-  };
-  deep: {
-    rsi: number;
-    wyckoffPhase: string;
-    hasBOS: boolean;
-    hasOB: boolean;
-    hasFVG: boolean;
-    hasChoCH: boolean;
-    hasSweep: boolean;
-    macdBull: boolean;
-    macdBear: boolean;
-    vwapAbove: boolean;
-    volRatio: number;
-  };
-  error?: string;
-}
-
-const POPULAR = ['ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT', 'DOGEUSDT', 'AVAXUSDT', 'DOTUSDT'];
-
-function Badge({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      padding: '2px 8px', borderRadius: 4, fontSize: 12,
-      background: ok ? '#16a34a22' : '#71717a22',
-      color: ok ? '#22c55e' : '#71717a',
-      border: `1px solid ${ok ? '#16a34a44' : '#3f3f4644'}`,
-    }}>
-      {ok ? '✓' : '✗'} {label}
-    </span>
-  );
-}
-
-function ScoreBar({ score }: { score: number }) {
-  const color = score >= 80 ? '#22c55e' : score >= 60 ? '#eab308' : '#ef4444';
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ flex: 1, height: 8, background: '#1e1e2e', borderRadius: 4, overflow: 'hidden' }}>
-        <div style={{ width: `${score}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.5s' }} />
-      </div>
-      <span style={{ color, fontWeight: 700, minWidth: 36 }}>{score}</span>
-    </div>
-  );
-}
-
+"use client";
+import { useState, useEffect } from "react";
+import type { scanPair } from "@/lib/scanner";
+type Result = Awaited<ReturnType<typeof scanPair>>;
+const card = {
+  padding: 20,
+  background: "#111827",
+  border: "1px solid #263244",
+  borderRadius: 12,
+};
+const input = {
+  padding: 10,
+  background: "#0b1220",
+  border: "1px solid #334155",
+  borderRadius: 6,
+  color: "#e2e8f0",
+  width: "100%",
+};
+const number = (v: number | null, d = 2) => (v === null ? "—" : v.toFixed(d));
 export default function Home() {
-  const [symbol, setSymbol] = useState('ETHUSDT');
-  const [result, setResult] = useState<ScanResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [showRaw, setShowRaw] = useState(false);
-
-  async function scan(sym = symbol) {
+  const [symbol, setSymbol] = useState("ETHUSDT"),
+    [capital, setCapital] = useState(5000),
+    [risk, setRisk] = useState(1),
+    [leverage, setLeverage] = useState(3),
+    [style, setStyle] = useState("INTRADAY");
+  const [result, setResult] = useState<Result | null>(null),
+    [loading, setLoading] = useState(false),
+    [error, setError] = useState("");
+  async function scan() {
     setLoading(true);
+    setError("");
     setResult(null);
     try {
-      const res = await fetch(`/api/scan?symbol=${sym.toUpperCase()}`);
-      const data = await res.json() as ScanResult;
+      const query = new URLSearchParams({
+        symbol,
+        capital: String(capital),
+        riskPct: String(risk),
+        leverage: String(leverage),
+        style,
+      });
+      const response = await fetch("/api/scan?" + query),
+        data = await response.json();
+      if (!response.ok) throw new Error(data.error);
       setResult(data);
     } catch (e) {
-      setResult({ ok: false, error: String(e) } as ScanResult);
+      setError(String(e));
     } finally {
       setLoading(false);
     }
   }
-
-  const dirColor = result?.direction === 'LONG' ? '#22c55e' : result?.direction === 'SHORT' ? '#ef4444' : '#94a3b8';
-
+  useEffect(() => {
+    const selected = new URLSearchParams(window.location.search).get("symbol");
+    if (selected && /^[A-Z0-9]+USDT$/.test(selected)) setSymbol(selected);
+  }, []);
+  const h = result?.history,
+    s = h?.comparable,
+    p = result?.plan;
   return (
-    <main style={{ maxWidth: 760, margin: '0 auto', padding: '24px 16px' }}>
-      {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.5px' }}>
-          🚀 4SCANS
-        </h1>
-        <p style={{ color: '#64748b', fontSize: 13, marginTop: 4 }}>
-          Bybit perpetuals · ICT + Wyckoff signal engine
-        </p>
-      </div>
-
-      {/* Search */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <input
-          value={symbol}
-          onChange={e => setSymbol(e.target.value.toUpperCase())}
-          onKeyDown={e => e.key === 'Enter' && scan()}
-          placeholder="e.g. ETHUSDT"
+    <main
+      style={{
+        maxWidth: 1000,
+        margin: "auto",
+        padding: "32px 18px",
+        color: "#e2e8f0",
+      }}
+    >
+      <h1 style={{ fontSize: 28, fontWeight: 800 }}>
+        4SCANS{" "}
+        <span style={{ color: "#5eead4", fontSize: 14 }}>HISTORICAL EDGE</span>
+      </h1>
+      <p style={{ color: "#94a3b8", margin: "8px 0 24px" }}>
+        Any Bybit USDT perpetual pair · Separate historical evidence for each
+        symbol
+      </p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          scan();
+        }}
+        style={card}
+      >
+        <div
           style={{
-            flex: 1, padding: '10px 14px', background: '#111118',
-            border: '1px solid #1e1e2e', borderRadius: 8, color: '#e2e8f0',
-            outline: 'none',
-          }}
-        />
-        <button
-          onClick={() => scan()}
-          disabled={loading}
-          style={{
-            padding: '10px 20px', background: '#6366f1', color: '#fff',
-            border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600,
-            opacity: loading ? 0.6 : 1,
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit,minmax(135px,1fr))",
+            gap: 12,
           }}
         >
-          {loading ? 'Scanning…' : 'Scan'}
-        </button>
-      </div>
-
-      {/* Quick picks */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 24 }}>
-        {POPULAR.map(s => (
-          <button
-            key={s}
-            onClick={() => { setSymbol(s); scan(s); }}
-            style={{
-              padding: '4px 10px', background: '#111118',
-              border: '1px solid #1e1e2e', borderRadius: 6,
-              color: '#94a3b8', cursor: 'pointer', fontSize: 12,
-            }}
-          >
-            {s.replace('USDT', '')}
-          </button>
-        ))}
-      </div>
-
-      {/* Error */}
-      {result?.error && (
-        <div style={{ padding: 16, background: '#ef444422', border: '1px solid #ef444444', borderRadius: 8, color: '#ef4444' }}>
-          {result.error}
+          <label>
+            Pair
+            <input
+              style={input}
+              placeholder="ETHUSDT, SOLUSDT, BTCUSDT…"
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              required
+              pattern="[A-Z0-9]+USDT"
+            />
+          </label>
+          <label>
+            Account ($)
+            <input
+              style={input}
+              type="number"
+              min="1"
+              value={capital}
+              onChange={(e) => setCapital(Number(e.target.value))}
+            />
+          </label>
+          <label>
+            Risk (%)
+            <input
+              style={input}
+              type="number"
+              min="0.01"
+              max="100"
+              step="0.01"
+              value={risk}
+              onChange={(e) => setRisk(Number(e.target.value))}
+            />
+          </label>
+          <label>
+            Leverage (×)
+            <input
+              style={input}
+              type="number"
+              min="1"
+              max="100"
+              value={leverage}
+              onChange={(e) => setLeverage(Number(e.target.value))}
+            />
+          </label>
+          <label>
+            Style
+            <select
+              style={input}
+              value={style}
+              onChange={(e) => setStyle(e.target.value)}
+            >
+              <option>SCALP</option>
+              <option>INTRADAY</option>
+              <option>SWING</option>
+            </select>
+          </label>
         </div>
+        <button
+          disabled={loading}
+          style={{
+            ...input,
+            marginTop: 16,
+            background: "#0f766e",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          {loading
+            ? "Loading pair history and testing setups…"
+            : "Analyse pair history"}
+        </button>
+      </form>
+      {error && (
+        <p role="alert" style={{ ...card, color: "#fca5a5", marginTop: 16 }}>
+          {error}
+        </p>
       )}
-
-      {/* Result card */}
-      {result?.ok && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-
-          {/* Symbol + price */}
-          <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <span style={{ fontWeight: 800, fontSize: 18 }}>{result.symbol}</span>
-                <span style={{ color: '#64748b', marginLeft: 8, fontSize: 13 }}>PERP</span>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontWeight: 700, fontSize: 18 }}>${result.price.toFixed(4)}</div>
-                <div style={{ fontSize: 12, color: result.change24h >= 0 ? '#22c55e' : '#ef4444' }}>
-                  {result.change24h >= 0 ? '+' : ''}{result.change24h.toFixed(2)}% 24h
+      {result && h && s && p && (
+        <div style={{ display: "grid", gap: 16, marginTop: 16 }}>
+          <section style={card}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: 12,
+              }}
+            >
+              <h2 style={{ fontSize: 22, fontWeight: 700 }}>
+                {result.symbol} · ${result.price.toPrecision(6)}
+              </h2>
+              <strong
+                style={{
+                  color: result.action === "NO TRADE" ? "#fbbf24" : "#5eead4",
+                }}
+              >
+                {result.action}
+              </strong>
+            </div>
+            <p>
+              {result.direction} · {result.style} · {s.sampleLabel}
+            </p>
+          </section>
+          <section style={card}>
+            <h2 style={{ fontWeight: 700, marginBottom: 12 }}>
+              Historical edge — {h.direction} comparisons
+            </h2>
+            <p style={{ color: "#94a3b8" }}>
+              Loaded period:{" "}
+              {h.range.from ? new Date(h.range.from).toLocaleDateString() : "—"}{" "}
+              to {h.range.to ? new Date(h.range.to).toLocaleDateString() : "—"}.
+              Historical simulations, not actual fills.
+            </p>
+            {[0, 1, 2].map((i) => (
+              <div key={i} style={{ marginTop: 12 }}>
+                <div
+                  style={{ display: "flex", justifyContent: "space-between" }}
+                >
+                  <span>TP{i + 1} before stop</span>
+                  <span>
+                    {s.wins[i]} / {s.n} · {number(s.tpRates[i], 1)}%
+                  </span>
+                </div>
+                <div
+                  style={{
+                    height: 7,
+                    background: "#253145",
+                    marginTop: 6,
+                    borderRadius: 4,
+                  }}
+                >
+                  <div
+                    style={{
+                      height: 7,
+                      width: `${s.tpRates[i] ?? 0}%`,
+                      background: "#2dd4bf",
+                      borderRadius: 4,
+                    }}
+                  />
                 </div>
               </div>
+            ))}
+            <p style={{ marginTop: 12 }}>
+              TP1 95% Wilson interval:{" "}
+              {s.interval
+                ? s.interval.map((v) => v.toFixed(1)).join("–") + "%"
+                : "unavailable"}
+              . Observed frequency; not a calibrated forecast.
+            </p>
+            <div style={{ overflowX: "auto", marginTop: 16 }}>
+              <table
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  borderCollapse: "collapse",
+                }}
+              >
+                <thead>
+                  <tr>
+                    {[
+                      "Evidence",
+                      "Trades",
+                      "TP1",
+                      "Expectancy",
+                      "Profit factor",
+                    ].map((v) => (
+                      <th key={v} style={{ padding: 8 }}>
+                        {v}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ["Loaded pair history", h.all],
+                    ["Current regime", h.regime],
+                    ["Closest matches", s],
+                    ["Walk-forward selected", h.outOfSample],
+                  ].map(([label, v]) => {
+                    const a = v as typeof s;
+                    return (
+                      <tr key={String(label)}>
+                        {[
+                          String(label),
+                          a.n,
+                          number(a.tpRates[0], 1) + "%",
+                          number(a.expectancy) + "R",
+                          number(a.profitFactor),
+                        ].map((c, i) => (
+                          <td
+                            key={i}
+                            style={{
+                              padding: 8,
+                              borderTop: "1px solid #263244",
+                            }}
+                          >
+                            {c}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          </div>
-
-          {/* Direction + score */}
-          <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <span style={{
-                padding: '4px 14px', borderRadius: 20, fontWeight: 800, fontSize: 16,
-                background: `${dirColor}22`, color: dirColor, border: `1px solid ${dirColor}44`,
-              }}>
-                {result.direction === 'LONG' ? '▲' : result.direction === 'SHORT' ? '▼' : '—'} {result.direction}
-              </span>
-              <span style={{ color: '#64748b', fontSize: 13 }}>{result.bestSetup} · {result.alignmentQuality}</span>
-            </div>
-            <div style={{ marginBottom: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                <span style={{ color: '#64748b', fontSize: 12 }}>Signal Score</span>
-                <span style={{ color: '#64748b', fontSize: 12 }}>Confidence {result.confidence}%</span>
-              </div>
-              <ScoreBar score={result.totalScore} />
-            </div>
-            <div style={{ marginBottom: 4 }}>
-              <div style={{ color: '#64748b', fontSize: 12, marginBottom: 4 }}>Alignment {result.alignmentScore.toFixed(0)}%</div>
-              <ScoreBar score={result.alignmentScore} />
-            </div>
-          </div>
-
-          {/* Trade levels */}
-          <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-            <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: '#94a3b8' }}>TRADE LEVELS</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))",
+                gap: 12,
+                marginTop: 16,
+              }}
+            >
               {[
-                { label: 'Entry', value: result.masterSignal.entry, color: '#e2e8f0' },
-                { label: 'Stop Loss', value: result.masterSignal.stopLoss, color: '#ef4444' },
-                { label: 'TP1', value: result.masterSignal.tp1, color: '#22c55e' },
-                { label: 'TP2', value: result.masterSignal.tp2, color: '#22c55e' },
-                { label: 'TP3', value: result.masterSignal.tp3, color: '#22c55e' },
-                { label: `Leverage ${result.masterSignal.leverage}×`, value: null, color: '#6366f1' },
-              ].map(({ label, value, color }) => (
-                <div key={label} style={{ padding: '8px 12px', background: '#0a0a0f', borderRadius: 6 }}>
-                  <div style={{ color: '#64748b', fontSize: 11 }}>{label}</div>
-                  <div style={{ color, fontWeight: 700 }}>
-                    {value !== null ? `$${value.toFixed(4)}` : `Net R:R ${result.masterSignal.netRR.toFixed(2)}×`}
-                  </div>
+                [
+                  "Mean / median MFE",
+                  `${number(s.avgMFE)}% / ${number(s.medianMFE)}%`,
+                ],
+                [
+                  "Mean / median MAE",
+                  `${number(s.avgMAE)}% / ${number(s.medianMAE)}%`,
+                ],
+                ["Mean holding time", `${number(s.holdingHours)} hours`],
+                ["Worst drawdown", `${number(s.maxDrawdownR)}R`],
+                ["Longest losing streak", s.maxLosingStreak],
+                ["Stop before TP1", `${number(s.stopFirst, 1)}%`],
+                ["30-day TP1", `${number(s.recent30DayTp1, 1)}%`],
+                [
+                  "Recency-weighted TP1",
+                  `${number(s.weightedTp1, 1)}% (effective n=${number(s.effectiveSample, 1)})`,
+                ],
+              ].map(([label, value]) => (
+                <div
+                  key={label}
+                  style={{
+                    background: "#0b1220",
+                    padding: 12,
+                    borderRadius: 6,
+                  }}
+                >
+                  <p style={{ color: "#94a3b8", fontSize: 12 }}>{label}</p>
+                  <strong>{value}</strong>
                 </div>
               ))}
             </div>
-            {result.masterSignal.leverageWarning && (
-              <div style={{ marginTop: 10, padding: 8, background: '#eab30822', borderRadius: 6, color: '#eab308', fontSize: 12 }}>
-                {result.masterSignal.leverageWarning}
-              </div>
-            )}
-          </div>
-
-          {/* Structure badges */}
-          <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-            <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13, color: '#94a3b8' }}>STRUCTURE</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              <Badge ok={result.deep.hasBOS}   label="BOS" />
-              <Badge ok={result.deep.hasOB}    label="Order Block" />
-              <Badge ok={result.deep.hasFVG}   label="FVG" />
-              <Badge ok={result.deep.hasChoCH} label="CHoCH" />
-              <Badge ok={result.deep.hasSweep} label="Liq. Sweep" />
-              <Badge ok={result.deep.macdBull || result.deep.macdBear} label="MACD signal" />
-              <Badge ok={result.deep.vwapAbove === (result.direction === 'LONG')} label="VWAP aligned" />
-              <Badge ok={result.deep.volRatio >= 1.5} label={`Vol ${result.deep.volRatio.toFixed(1)}×`} />
+            <p style={{ color: "#94a3b8", marginTop: 12 }}>{h.validation}</p>
+            <p style={{ color: "#fbbf24", marginTop: 8 }}>{h.costNote}</p>
+          </section>
+          <section style={card}>
+            <h2 style={{ fontWeight: 700 }}>
+              Your ${p.capital.toLocaleString()} conditional trade
+            </h2>
+            <p style={{ color: "#94a3b8" }}>
+              Estimates before exchange precision, live funding and fill
+              reconciliation. Planned loss is not a guaranteed maximum.
+            </p>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit,minmax(165px,1fr))",
+                gap: 12,
+                marginTop: 16,
+              }}
+            >
+              {[
+                ["Risk budget", p.riskBudget],
+                ["Planned stop loss", p.plannedLoss],
+                ["Notional", p.notional],
+                ["Selected margin", p.margin],
+                ["Margin at 3×", p.margin3x],
+                ["Margin at 5×", p.margin5x],
+                ["Stop fees", p.stop.fees],
+                ["Stop slippage", p.stop.slippage],
+              ].map(([label, value]) => (
+                <div
+                  key={label}
+                  style={{
+                    padding: 12,
+                    background: "#0b1220",
+                    borderRadius: 6,
+                  }}
+                >
+                  <p style={{ fontSize: 12, color: "#94a3b8" }}>{label}</p>
+                  <strong>${Number(value).toFixed(2)}</strong>
+                </div>
+              ))}
             </div>
-            <div style={{ marginTop: 10, display: 'flex', gap: 16, fontSize: 13 }}>
-              <div>
-                <span style={{ color: '#64748b' }}>RSI </span>
-                <span style={{ color: result.deep.rsi > 70 ? '#ef4444' : result.deep.rsi < 30 ? '#22c55e' : '#e2e8f0', fontWeight: 600 }}>
-                  {result.deep.rsi.toFixed(1)}
-                </span>
-              </div>
-              <div>
-                <span style={{ color: '#64748b' }}>Wyckoff </span>
-                <span style={{ fontWeight: 600 }}>{result.deep.wyckoffPhase}</span>
-              </div>
+            <p style={{ marginTop: 12 }}>
+              Entry ${result.levels.entry.toPrecision(6)} · Stop $
+              {result.levels.stopLoss.toPrecision(6)} · Distance{" "}
+              {p.stopDistancePct.toFixed(3)}%
+            </p>
+            <div style={{ overflowX: "auto" }}>
+              <table
+                style={{ width: "100%", textAlign: "left", marginTop: 12 }}
+              >
+                <thead>
+                  <tr>
+                    <th>Full-position scenario</th>
+                    <th>Target</th>
+                    <th>Gross P&amp;L</th>
+                    <th>Net P&amp;L</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {p.targets.map((t, i) => (
+                    <tr key={i}>
+                      <td>TP{i + 1}</td>
+                      <td>
+                        $
+                        {[
+                          result.levels.tp1,
+                          result.levels.tp2,
+                          result.levels.tp3,
+                        ][i].toPrecision(6)}
+                      </td>
+                      <td>${t.gross.toFixed(2)}</td>
+                      <td>${t.net.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-
-          {/* Verdict */}
-          <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-            <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13, color: '#94a3b8' }}>VERDICT</div>
-            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.7, color: '#cbd5e1' }}>
+            <p style={{ marginTop: 12 }}>
+              50/25/25 exit path reaching all targets:{" "}
+              <strong>${p.stagedNet.toFixed(2)} net</strong>.
+            </p>
+            <p style={{ color: "#94a3b8" }}>{p.liquidationNote}</p>
+          </section>
+          <section style={card}>
+            <h2 style={{ fontWeight: 700, marginBottom: 12 }}>
+              Trader verdict
+            </h2>
+            <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>
               {result.verdict}
-            </pre>
-          </div>
-
-          {/* Raw signal toggle */}
-          <button
-            onClick={() => setShowRaw(v => !v)}
-            style={{
-              padding: '8px 0', background: 'none', border: '1px solid #1e1e2e',
-              borderRadius: 8, color: '#64748b', cursor: 'pointer',
-            }}
-          >
-            {showRaw ? 'Hide' : 'Show'} raw signal text
-          </button>
-
-          {showRaw && (
-            <div style={{ padding: 16, background: '#111118', border: '1px solid #1e1e2e', borderRadius: 10 }}>
-              <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, lineHeight: 1.7, color: '#94a3b8' }}>
-                {result.masterSignal.signalText}
-              </pre>
-            </div>
-          )}
+            </p>
+          </section>
+          <details style={card}>
+            <summary>Method and data coverage</summary>
+            <p>{result.analyst}</p>
+            <p>Storage: {result.storage}</p>
+            <p>Unavailable features: {h.missingFeatures.join(", ")}.</p>
+            <p>
+              Model: {result.model}. Non-overlapping trades within each
+              direction; stop-first for ambiguous candles; timeouts exit at the
+              final candle close. Wilson intervals do not account for all market
+              dependence. Undefined profit factor is shown as —.
+            </p>
+          </details>
         </div>
       )}
     </main>

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test tests/*.cjs"
   },
   "dependencies": {
     "next": "^15.3.3",

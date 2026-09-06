@@ -1,28 +1,33 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { fetchKlines, fetchTicker } from '@/lib/bybit';
-import { runEngine } from '@/lib/signalEngine';
-
+import { NextRequest, NextResponse } from "next/server";
+import { scanPair } from "@/lib/scanner";
+import { STYLE, type Style } from "@/lib/history";
+export const maxDuration = 60;
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const symbol = (searchParams.get('symbol') ?? 'ETHUSDT').toUpperCase();
-
   try {
-    const [ticker, c1m, c5m, c15m, c1h, c4h, c1d] = await Promise.all([
-      fetchTicker(symbol),
-      fetchKlines(symbol, '1',   80),
-      fetchKlines(symbol, '5',   100),
-      fetchKlines(symbol, '15',  100),
-      fetchKlines(symbol, '60',  200),
-      fetchKlines(symbol, '240', 100),
-      fetchKlines(symbol, 'D',   100),
-    ]);
-
-    const candleMap = { '1m': c1m, '5m': c5m, '15m': c15m, '1h': c1h, '4h': c4h, '1d': c1d };
-    const timestamp = new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' });
-    const result = runEngine(symbol, ticker.price, candleMap, timestamp);
-
-    return NextResponse.json({ ok: true, symbol, price: ticker.price, change24h: ticker.change24h, ...result });
-  } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    const q = new URL(req.url).searchParams,
+      symbol = (q.get("symbol") ?? "ETHUSDT").toUpperCase();
+    const style = (q.get("style") ?? "INTRADAY") as Style;
+    if (!/^[A-Z0-9]{2,25}USDT$/.test(symbol) || !Object.hasOwn(STYLE, style))
+      throw new Error("Invalid symbol or style");
+    const preferences = {
+      style,
+      capital: Number(q.get("capital") ?? 5000),
+      riskPct: Number(q.get("riskPct") ?? 1),
+      leverage: Number(q.get("leverage") ?? 3),
+    };
+    if (
+      !Number.isFinite(preferences.capital) ||
+      preferences.capital <= 0 ||
+      !Number.isFinite(preferences.riskPct) ||
+      preferences.riskPct <= 0 ||
+      preferences.riskPct > 100 ||
+      !Number.isFinite(preferences.leverage) ||
+      preferences.leverage < 1 ||
+      preferences.leverage > 100
+    )
+      throw new Error("Invalid account settings");
+    return NextResponse.json(await scanPair(symbol, preferences));
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: String(e) }, { status: 400 });
   }
 }
