@@ -260,23 +260,100 @@ export function detectOB(candles: RawCandle[], direction: 'LONG' | 'SHORT'): boo
   return false;
 }
 
-export function detectFVG(candles: RawCandle[]): boolean {
-  for (let i = 2; i < candles.length; i++) {
-    const gap  = candles[i].low - candles[i - 2].high;
-    const gap2 = candles[i - 2].low - candles[i].high;
-    if (gap > 0 || gap2 > 0) return true;
+/**
+ * FVG — a 3-candle imbalance in the trade direction that is (a) recent,
+ * (b) at least 0.3× ATR wide, (c) not yet fully mitigated, and (d) sitting
+ * on the correct side of price so it can act as a draw / support.
+ * Without a direction it degrades to "any gap in the last 10 candles".
+ */
+export function detectFVG(candles: RawCandle[], direction?: 'LONG' | 'SHORT', atrVal?: number): boolean {
+  if (candles.length < 5) return false;
+  if (!direction) {
+    const recent = candles.slice(-10);
+    for (let i = 2; i < recent.length; i++) {
+      if (recent[i].low > recent[i - 2].high || recent[i - 2].low > recent[i].high) return true;
+    }
+    return false;
+  }
+  const a = atrVal && atrVal > 0 ? atrVal : atr(candles.slice(-20));
+  if (a === 0) return false;
+  const minGap = a * 0.3;
+  const price = candles[candles.length - 1].close;
+  const window = candles.slice(-24);
+
+  for (let i = window.length - 2; i >= 2; i--) {
+    const c0 = window[i - 2], c2 = window[i];
+    const after = window.slice(i + 1);
+    if (direction === 'LONG') {
+      const gapLow = c0.high, gapHigh = c2.low;
+      if (gapHigh - gapLow < minGap) continue;
+      const mitigated = after.some(c => c.low <= gapLow);
+      if (mitigated) continue;
+      if (price < gapLow) continue;
+      return true;
+    } else {
+      const gapHigh = c0.low, gapLow = c2.high;
+      if (gapHigh - gapLow < minGap) continue;
+      const mitigated = after.some(c => c.high >= gapHigh);
+      if (mitigated) continue;
+      if (price > gapHigh) continue;
+      return true;
+    }
   }
   return false;
 }
 
-export function detectChoCH(candles: RawCandle[]): boolean {
-  if (candles.length < 20) return false;
-  const half = Math.floor(candles.length / 2);
-  const first = candles.slice(0, half);
-  const second = candles.slice(half);
-  const trend1 = first[first.length - 1].close > first[0].close ? 'UP' : 'DOWN';
-  const trend2 = second[second.length - 1].close > second[0].close ? 'UP' : 'DOWN';
-  return trend1 !== trend2;
+interface Swing { idx: number; price: number; kind: 'H' | 'L' }
+
+function fractalSwings(candles: RawCandle[], strength = 2): Swing[] {
+  const out: Swing[] = [];
+  for (let i = strength; i < candles.length - strength; i++) {
+    const c = candles[i];
+    let isH = true, isL = true;
+    for (let k = 1; k <= strength; k++) {
+      if (candles[i - k].high >= c.high || candles[i + k].high >= c.high) isH = false;
+      if (candles[i - k].low  <= c.low  || candles[i + k].low  <= c.low)  isL = false;
+    }
+    if (isH) out.push({ idx: i, price: c.high, kind: 'H' });
+    if (isL) out.push({ idx: i, price: c.low,  kind: 'L' });
+  }
+  return out;
+}
+
+/**
+ * CHoCH — Change of Character. Real definition: price was printing a
+ * sequence of lower highs (bearish structure) and then CLOSES above the most
+ * recent lower high (bullish CHoCH), or vice-versa. This is the first crack
+ * in the prevailing structure — the earliest reversal signal in ICT.
+ * Without a direction it returns true if either side's CHoCH fired.
+ */
+export function detectChoCH(candles: RawCandle[], direction?: 'LONG' | 'SHORT'): boolean {
+  if (candles.length < 30) return false;
+  const window = candles.slice(-60);
+  const swings = fractalSwings(window, 2);
+  const lastClose = window[window.length - 1].close;
+  const lastIdx = window.length - 1;
+
+  const bullish = (() => {
+    const highs = swings.filter(s => s.kind === 'H');
+    if (highs.length < 2) return false;
+    const h2 = highs[highs.length - 1], h1 = highs[highs.length - 2];
+    const lowerHighs = h2.price < h1.price;
+    const recent = lastIdx - h2.idx <= 12;
+    return lowerHighs && recent && lastClose > h2.price;
+  })();
+  const bearish = (() => {
+    const lows = swings.filter(s => s.kind === 'L');
+    if (lows.length < 2) return false;
+    const l2 = lows[lows.length - 1], l1 = lows[lows.length - 2];
+    const higherLows = l2.price > l1.price;
+    const recent = lastIdx - l2.idx <= 12;
+    return higherLows && recent && lastClose < l2.price;
+  })();
+
+  if (direction === 'LONG')  return bullish;
+  if (direction === 'SHORT') return bearish;
+  return bullish || bearish;
 }
 
 export function detectLiquiditySweep(candles: RawCandle[]): boolean {

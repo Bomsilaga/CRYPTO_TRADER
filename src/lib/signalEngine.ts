@@ -349,8 +349,9 @@ export function runEngine(
   const hasBOS   = detectBOS(h1);
   // FIXED: OB now uses stricter impulse-confirmed detection
   const hasOB    = direction !== 'NEUTRAL' ? detectOB(h1, direction === 'LONG' ? 'LONG' : 'SHORT') : false;
-  const hasFVG   = detectFVG(h1.slice(-10));
-  const hasChoCH = detectChoCH(h1);
+  const tradeDir = direction === 'NEUTRAL' ? null : direction;
+  const hasFVG   = tradeDir ? detectFVG(h1, tradeDir, atrVal) : false;
+  const hasChoCH = tradeDir ? detectChoCH(h1, tradeDir) : false;
   const sweeps   = detectSweeps(h1);
   const hasSweep = sweeps.length > 0;
   const sweepMgmt = sweepManagementAdvice(sweeps, price, atrVal, direction === 'NEUTRAL' ? 'LONG' : direction);
@@ -492,10 +493,13 @@ export function runEngine(
   };
 
   const resolvedDir = direction === 'NEUTRAL' ? 'LONG' : direction;
-  const verdict = buildVerdict(resolvedDir, score, confidence, alignQuality, bestSetup, deep, intradaySignal, atrPct);
+  const baseVerdict = buildVerdict(resolvedDir, score, confidence, alignQuality, bestSetup, deep, intradaySignal, atrPct);
+  const verdict = direction === 'NEUTRAL'
+    ? `⏸ NO TRADE — timeframe bias is split (${Object.entries(trendMap).map(([k, v]) => `${k}:${v}`).join(' · ')}).\nThe engine will not manufacture a side. Wait for 1h + 4h to agree, then re-scan.\n\nReference levels below assume LONG for display only.\n\n${baseVerdict}`
+    : baseVerdict;
 
   return {
-    direction: resolvedDir,
+    direction,
     totalScore: score,
     confidence,
     alignmentScore: effectiveAlign,

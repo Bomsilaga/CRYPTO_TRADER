@@ -76,6 +76,13 @@ interface TradeResult {
   qty?: number;
   balance?: string;
   riskAmt?: string;
+  notional?: string;
+  margin?: string;
+  warnings?: string[];
+  slVerified?: string;
+  tpStatus?: { tp: string; ok: boolean; msg: string; qty?: number; price?: number }[];
+  netIfAllTargets?: string;
+  netIfStopped?: string;
   fundingChecked?: boolean;
   feeEstimate?: {
     totalFee: string;
@@ -250,7 +257,7 @@ function RiskCalculator() {
   );
 
   return (
-    <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+    <div className="glass" style={{ padding: 16 }}>
       <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)', marginBottom: 14 }}>📐 POSITION CALCULATOR</div>
 
       {/* Inputs */}
@@ -429,20 +436,6 @@ const POPULAR = GROUPS.flatMap(g => g.symbols);
 
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
 
-function Badge({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      padding: '2px 8px', borderRadius: 4, fontSize: 12,
-      background: ok ? '#16a34a22' : '#71717a22',
-      color: ok ? '#22c55e' : '#71717a',
-      border: `1px solid ${ok ? '#16a34a44' : '#3f3f4644'}`,
-    }}>
-      {ok ? '✓' : '✗'} {label}
-    </span>
-  );
-}
-
 function SyncKeyInput({ onLoad }: { onLoad: (key: string) => void }) {
   const [val, setVal] = useState('');
   return (
@@ -463,14 +456,172 @@ function SyncKeyInput({ onLoad }: { onLoad: (key: string) => void }) {
   );
 }
 
-function ScoreBar({ score }: { score: number }) {
-  const color = score >= 80 ? '#22c55e' : score >= 60 ? '#eab308' : '#ef4444';
+/* ─── Visual primitives ─────────────────────────────────────────────────── */
+
+const scoreTone = (s: number) => s >= 80 ? '#22c55e' : s >= 65 ? '#eab308' : s >= 50 ? '#f97316' : '#ef4444';
+const fmtPx = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
+const fmtUsd = (v: number, dp = 2) => `${v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
+
+function ScoreRing({ value, size = 128, stroke = 10, label, sub, color, glow = true }: {
+  value: number; size?: number; stroke?: number; label: string; sub?: string; color?: string; glow?: boolean;
+}) {
+  const v = Math.max(0, Math.min(100, value));
+  const c = color ?? scoreTone(v);
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const off = circ * (1 - v / 100);
+  const id = `ring-${label.replace(/\W+/g, '')}-${size}`;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ flex: 1, height: 8, background: 'var(--c-border)', borderRadius: 4, overflow: 'hidden' }}>
-        <div style={{ width: `${score}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.5s' }} />
+    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)', ['--glow' as string]: `${c}88`, animation: glow ? 'glowBreath 3.6s ease-in-out infinite' : undefined }}>
+        <defs>
+          <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor={c} stopOpacity="1" />
+            <stop offset="100%" stopColor={c} stopOpacity="0.45" />
+          </linearGradient>
+        </defs>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--c-border)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2} cy={size / 2} r={r} fill="none"
+          stroke={`url(#${id})`} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={circ} strokeDashoffset={off}
+          style={{ ['--ring-total' as string]: circ, animation: 'ringDraw 1.1s cubic-bezier(0.2,0.8,0.2,1) both', transition: 'stroke-dashoffset 0.6s ease' }}
+        />
+      </svg>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+        <div className="mono" style={{ fontSize: size * 0.26, fontWeight: 800, color: c, lineHeight: 1 }}>{Math.round(v)}</div>
+        <div className="eyebrow" style={{ marginTop: 4, fontSize: Math.max(8, size * 0.075) }}>{label}</div>
+        {sub && <div style={{ fontSize: Math.max(9, size * 0.08), color: 'var(--c-dim)', marginTop: 2 }}>{sub}</div>}
       </div>
-      <span style={{ color, fontWeight: 700, minWidth: 36 }}>{score}</span>
+    </div>
+  );
+}
+
+function MiniRing({ value, size = 64, color, label, caption }: { value: number | null; size?: number; color: string; label: string; caption?: string }) {
+  const stroke = 6;
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const v = value === null ? 0 : Math.max(0, Math.min(100, value));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+      <div style={{ position: 'relative', width: size, height: size }}>
+        <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--c-border)" strokeWidth={stroke} />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={value === null ? 'var(--c-faintest)' : color} strokeWidth={stroke} strokeLinecap="round"
+            strokeDasharray={value === null ? `4 6` : circ} strokeDashoffset={value === null ? 0 : circ * (1 - v / 100)}
+            style={{ ['--ring-total' as string]: circ, animation: value === null ? undefined : 'ringDraw 1s cubic-bezier(0.2,0.8,0.2,1) both' }} />
+        </svg>
+        <div className="mono" style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.24, fontWeight: 800, color: value === null ? 'var(--c-faintest)' : color }}>
+          {value === null ? '—' : `${Math.round(v)}%`}
+        </div>
+      </div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: value === null ? 'var(--c-faint)' : color }}>{label}</div>
+        {caption && <div style={{ fontSize: 9, color: 'var(--c-faintest)', marginTop: 1 }}>{caption}</div>}
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ icon, title, right, accent }: { icon?: string; title: string; right?: React.ReactNode; accent?: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {accent && <span style={{ width: 3, height: 14, borderRadius: 2, background: accent, boxShadow: `0 0 12px ${accent}` }} />}
+        {icon && <span style={{ fontSize: 13 }}>{icon}</span>}
+        <span className="eyebrow" style={{ color: 'var(--c-muted)' }}>{title}</span>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function Confluence({ ok, label, weight }: { ok: boolean; label: string; weight?: string }) {
+  return (
+    <span className={`chip ${ok ? 'on' : ''}`} style={{
+      background: ok ? 'linear-gradient(135deg, rgba(34,197,94,0.22), rgba(34,197,94,0.08))' : 'rgba(113,113,122,0.10)',
+      color: ok ? '#4ade80' : 'var(--c-faintest)',
+      borderColor: ok ? 'rgba(34,197,94,0.45)' : 'var(--c-border)',
+      boxShadow: ok ? '0 0 16px -4px rgba(34,197,94,0.55)' : 'none',
+      textDecoration: ok ? 'none' : 'line-through',
+      textDecorationColor: 'rgba(148,163,184,0.5)',
+    }}>
+      <span style={{ fontSize: 10 }}>{ok ? '●' : '○'}</span>{label}
+      {weight && <span style={{ fontSize: 9, opacity: 0.7, marginLeft: 2 }}>{weight}</span>}
+    </span>
+  );
+}
+
+function PriceLadder({ direction, entry, stopLoss, tp1, tp2, tp3, liq, pnl }: {
+  direction: string; entry: number; stopLoss: number; tp1: number; tp2: number; tp3: number; liq?: number;
+  pnl?: (p: number) => number;
+}) {
+  const isLong = direction === 'LONG';
+  const pts = [
+    { key: 'SL',  price: stopLoss, color: '#ef4444', tag: 'STOP' },
+    { key: 'ENT', price: entry,    color: '#a5b4fc', tag: 'ENTRY' },
+    { key: 'TP1', price: tp1,      color: '#4ade80', tag: '50%' },
+    { key: 'TP2', price: tp2,      color: '#22c55e', tag: '25%' },
+    { key: 'TP3', price: tp3,      color: '#16a34a', tag: '25%' },
+  ];
+  const core = pts.map(p => p.price);
+  const cLo = Math.min(...core), cHi = Math.max(...core);
+  const cSpan = cHi - cLo || 1;
+  const liqIn = !!liq && liq >= cLo - cSpan * 0.6 && liq <= cHi + cSpan * 0.6;
+  const all = liqIn ? [...core, liq!] : core;
+  const lo = Math.min(...all), hi = Math.max(...all);
+  const span = hi - lo || 1;
+  const pos = (p: number) => ((p - lo) / span) * 100;
+  const entryPos = pos(entry);
+  const tpEnd = pos(tp3), slEnd = pos(stopLoss);
+  const liqFarPct = liq ? Math.abs(liq - entry) / entry * 100 : 0;
+  return (
+    <div style={{ position: 'relative', padding: '30px 0 76px', margin: '0 34px' }}>
+      <div style={{ position: 'absolute', left: 0, right: 0, top: 44, height: 10, borderRadius: 5, background: 'var(--c-border)' }} />
+      {liq && !liqIn && (
+        <div style={{ position: 'absolute', top: 40, [isLong ? 'left' : 'right']: -34, textAlign: 'center', width: 30 }}>
+          <div style={{ fontSize: 8, fontWeight: 800, color: '#f97316', letterSpacing: '0.08em' }}>{isLong ? '◂' : '▸'} LIQ</div>
+          <div className="mono" style={{ fontSize: 8, color: '#f97316', opacity: 0.8 }}>{liqFarPct.toFixed(0)}%</div>
+        </div>
+      )}
+      <div style={{ position: 'absolute', top: 44, height: 10, borderRadius: 5,
+        left: `${Math.min(entryPos, slEnd)}%`, width: `${Math.abs(entryPos - slEnd)}%`,
+        background: 'linear-gradient(90deg, rgba(239,68,68,0.85), rgba(239,68,68,0.25))', boxShadow: '0 0 14px rgba(239,68,68,0.45)' }} />
+      <div style={{ position: 'absolute', top: 44, height: 10, borderRadius: 5,
+        left: `${Math.min(entryPos, tpEnd)}%`, width: `${Math.abs(entryPos - tpEnd)}%`,
+        background: isLong ? 'linear-gradient(90deg, rgba(34,197,94,0.25), rgba(34,197,94,0.9))' : 'linear-gradient(90deg, rgba(34,197,94,0.9), rgba(34,197,94,0.25))',
+        boxShadow: '0 0 14px rgba(34,197,94,0.45)' }} />
+      {liq && liqIn && (
+        <div style={{ position: 'absolute', left: `${pos(liq)}%`, top: 36, transform: 'translateX(-50%)', textAlign: 'center' }}>
+          <div style={{ width: 2, height: 26, background: '#f97316', margin: '0 auto', boxShadow: '0 0 8px #f97316' }} />
+          <div style={{ fontSize: 8, fontWeight: 800, color: '#f97316', letterSpacing: '0.1em', marginTop: 2 }}>LIQ</div>
+        </div>
+      )}
+      {pts.map((p, i) => {
+        const x = pos(p.price);
+        const above = i % 2 === 0;
+        const isEntry = p.key === 'ENT';
+        const pv = pnl && !isEntry ? pnl(p.price) : null;
+        return (
+          <div key={p.key} style={{ position: 'absolute', left: `${x}%`, top: above ? 0 : 60, transform: 'translateX(-50%)', textAlign: 'center', width: 84 }}>
+            {above ? (
+              <>
+                <div style={{ fontSize: 10, fontWeight: 800, color: p.color, letterSpacing: '0.06em' }}>{p.key} <span style={{ fontSize: 8, opacity: 0.7 }}>{p.tag}</span></div>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--c-text)', fontWeight: 700 }}>${fmtPx(p.price)}</div>
+                {pv !== null && <div className="mono" style={{ fontSize: 9, fontWeight: 800, color: pv >= 0 ? '#22c55e' : '#ef4444' }}>{pv >= 0 ? '+' : ''}{fmtUsd(pv, 0)}</div>}
+                <div style={{ width: isEntry ? 14 : 10, height: isEntry ? 14 : 10, borderRadius: '50%', background: p.color, margin: '4px auto 0', border: '2px solid var(--c-card)', boxShadow: `0 0 12px ${p.color}` }} />
+              </>
+            ) : (
+              <>
+                <div style={{ width: isEntry ? 14 : 10, height: isEntry ? 14 : 10, borderRadius: '50%', background: p.color, margin: '0 auto 4px', border: '2px solid var(--c-card)', boxShadow: `0 0 12px ${p.color}` }} />
+                <div style={{ fontSize: 10, fontWeight: 800, color: p.color, letterSpacing: '0.06em' }}>{p.key} <span style={{ fontSize: 8, opacity: 0.7 }}>{p.tag}</span></div>
+                <div className="mono" style={{ fontSize: 10, color: 'var(--c-text)', fontWeight: 700 }}>${fmtPx(p.price)}</div>
+                {pv !== null && <div className="mono" style={{ fontSize: 9, fontWeight: 800, color: pv >= 0 ? '#22c55e' : '#ef4444' }}>{pv >= 0 ? '+' : ''}{fmtUsd(pv, 0)}</div>}
+              </>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -495,6 +646,7 @@ export default function Home() {
   const [marketScanning, setMarketScanning] = useState(false);
   const [marketProgress, setMarketProgress] = useState(0);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [marketsOpen, setMarketsOpen] = useState(true);
   const [hlExpanded, setHlExpanded] = useState<Set<string>>(new Set());
   const [expandedTrades, setExpandedTrades] = useState<Set<string>>(new Set());
 
@@ -988,6 +1140,7 @@ export default function Home() {
       ]);
       const data = await res.json() as ScanResult;
       setResult(data);
+      if (data.ok) setMarketsOpen(false);
       if (btcRes) {
         const btcData = await btcRes.json() as ScanResult;
         if (btcData.ok) setBtcResult(btcData);
@@ -1045,6 +1198,26 @@ export default function Home() {
           ...result,
           provider: aiProvider,
           clientApiKey: aiKeyMap[aiProvider] || undefined,
+          account: {
+            accountSize, riskPct, orderType,
+            leverage: userLeverage || result.masterSignal.leverage,
+            dailyLossLimit, dailyTarget, maxTrades,
+            openTrades: tradesRef.current.filter(t => t.status === 'open').length,
+          },
+          edge: (() => {
+            const closed = tradesRef.current.filter(t => t.status !== 'open');
+            const n = closed.length;
+            if (n < 5) return { samples: n };
+            const r = (f: (t: TradeEntry) => boolean) => Math.round(closed.filter(f).length / n * 100);
+            const pnls = closed.map(t => t.pnlDollars ?? 0);
+            return {
+              samples: n,
+              tp1Rate: r(t => !!t.tp1Hit || t.status === 'tp3'),
+              tp2Rate: r(t => !!t.tp2Hit || t.status === 'tp3'),
+              tp3Rate: r(t => !!t.tp3Hit || t.status === 'tp3'),
+              expectancy: pnls.reduce((a, b) => a + b, 0) / n,
+            };
+          })(),
           btcDirection: btcResult?.direction,
           btcScore: btcResult?.totalScore,
           btcConfidence: btcResult?.confidence,
@@ -1111,6 +1284,8 @@ export default function Home() {
           orderType,
           force: forceTrade,
           userLeverage: effectiveLev,
+          accountSize,
+          ...(typeof manualMarginUsdt === 'number' && manualMarginUsdt > 0 && { marginUsdt: manualMarginUsdt }),
           ...(apiKey && { apiKey }),
           ...(apiSecret && { apiSecret }),
           liveMode,
@@ -1199,10 +1374,10 @@ export default function Home() {
   const isDark = theme === 'dark';
   // CSS variable values injected onto <main>
   const cssVars = isDark ? {
-    '--c-bg':        '#080810',
-    '--c-card':      '#111118',
-    '--c-inner':     '#0a0a0f',
-    '--c-border':    '#1e1e2e',
+    '--c-bg':        '#06060c',
+    '--c-card':      'rgba(17, 17, 26, 0.72)',
+    '--c-inner':     'rgba(8, 8, 14, 0.62)',
+    '--c-border':    'rgba(99, 102, 241, 0.14)',
     '--c-text':      '#e2e8f0',
     '--c-muted':     '#94a3b8',
     '--c-dim':       '#64748b',
@@ -1222,18 +1397,19 @@ export default function Home() {
     '--c-subtle':    '#1e293b',
   };
 
-  const TAB_STYLE = (active: boolean) => ({
-    flex: 1, padding: '10px 0', border: 'none', cursor: 'pointer',
-    fontWeight: 700, fontSize: 13,
-    background: active ? 'var(--c-card)' : 'transparent',
-    color: active ? 'var(--c-text)' : 'var(--c-faint)',
-    borderBottom: active ? '2px solid #6366f1' : '2px solid transparent',
-    transition: 'all 0.15s',
-  });
+  const openCount = trades.filter(t => t.status === 'open').length;
+  const TABS: { id: Tab; icon: string; label: string; badge?: number }[] = [
+    { id: 'scan',     icon: '◎', label: 'Scan' },
+    { id: 'radar',    icon: '◉', label: 'Radar' },
+    { id: 'calc',     icon: '∑', label: 'Calc' },
+    { id: 'trades',   icon: '⇅', label: 'Open',  badge: openCount || undefined },
+    { id: 'log',      icon: '≡', label: 'Log',   badge: trades.length || undefined },
+    { id: 'settings', icon: '⚙', label: 'Setup' },
+  ];
 
   return (
-    <main data-theme={theme} style={{ maxWidth: 920, margin: '0 auto', padding: '0 0 40px', background: 'var(--c-bg)', minHeight: '100vh', ...cssVars } as React.CSSProperties}>
-      <style>{`body { background: ${isDark ? '#080810' : '#f1f5f9'}; margin: 0; }`}</style>
+    <main data-theme={theme} style={{ maxWidth: 920, margin: '0 auto', padding: '0 0 48px', minHeight: '100vh', ...cssVars } as React.CSSProperties}>
+      <style>{`body { background: ${isDark ? '#06060c' : '#f1f5f9'}; margin: 0; }`}</style>
 
       {/* ── Toast notifications ────────────────────────────────────────── */}
       {toasts.length > 0 && (
@@ -1256,53 +1432,75 @@ export default function Home() {
       <style>{`@keyframes slideIn { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: translateX(0); } }`}</style>
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div style={{ padding: '20px 16px 0', marginBottom: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.5px', margin: 0, color: 'var(--c-text)' }}>
-              🚀 4SCANS
-            </h1>
-            <p style={{ color: 'var(--c-dim)', fontSize: 12, marginTop: 3, marginBottom: 0 }}>
-              Bybit perpetuals · ICT + Wyckoff · {liveMode ? <span style={{ color: '#ef4444', fontWeight: 700 }}>⚡ LIVE</span> : <span style={{ color: '#22c55e' }}>📄 PAPER</span>}
-            </p>
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 40, padding: '14px 16px 12px',
+        background: isDark ? 'linear-gradient(180deg, rgba(6,6,12,0.92), rgba(6,6,12,0.72))' : 'rgba(241,245,249,0.85)',
+        backdropFilter: 'blur(20px) saturate(150%)', WebkitBackdropFilter: 'blur(20px) saturate(150%)',
+        borderBottom: '1px solid var(--c-border)',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 40, height: 40, borderRadius: 12, display: 'grid', placeItems: 'center',
+              background: 'linear-gradient(135deg, #6366f1 0%, #7c3aed 55%, #06b6d4 130%)',
+              boxShadow: '0 8px 24px -8px rgba(99,102,241,0.9), 0 0 0 1px rgba(255,255,255,0.08) inset',
+              fontWeight: 900, fontSize: 15, color: '#fff', letterSpacing: '-0.04em', fontFamily: 'var(--font-mono)',
+            }}>4S</div>
+            <div>
+              <h1 style={{
+                fontSize: 21, fontWeight: 900, letterSpacing: '-0.04em', margin: 0, lineHeight: 1.1,
+                background: isDark ? 'linear-gradient(90deg, #f8fafc 0%, #c7d2fe 60%, #a5b4fc 100%)' : 'linear-gradient(90deg, #0f172a, #4338ca)',
+                WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
+              }}>
+                4SCANS
+              </h1>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
+                <span className="eyebrow" style={{ fontSize: 9 }}>Bybit Perps · ICT × Wyckoff</span>
+              </div>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {/* Theme toggle */}
             <button onClick={() => {
               const next: Theme = theme === 'dark' ? 'light' : 'dark';
               setTheme(next);
               try { const s = JSON.parse(localStorage.getItem('4scans-settings') ?? '{}'); localStorage.setItem('4scans-settings', JSON.stringify({ ...s, theme: next })); } catch { /* ignore */ }
-            }} style={{
-              padding: '6px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              background: 'var(--c-card)', color: 'var(--c-dim)',
-              border: '1px solid var(--c-border)',
+            }} title="Toggle theme" style={{
+              width: 34, height: 34, borderRadius: 10, fontSize: 14, cursor: 'pointer', display: 'grid', placeItems: 'center',
+              background: 'var(--c-card)', color: 'var(--c-dim)', border: '1px solid var(--c-border)',
             }}>
-              {isDark ? '☀️ Light' : '🌙 Dark'}
+              {isDark ? '☀' : '☾'}
             </button>
-            {/* Mode badge */}
-            <div style={{
-              padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              background: liveMode ? '#ef444422' : '#16a34a22',
-              color: liveMode ? '#ef4444' : '#22c55e',
-              border: `1px solid ${liveMode ? '#ef444444' : '#16a34a44'}`,
-            }} onClick={() => setTab('settings')}>
-              {liveMode ? '⚡ Live' : '📄 Paper'}
-            </div>
+            <button onClick={() => setTab('settings')} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8,
+              padding: '7px 14px', borderRadius: 999, fontSize: 11, fontWeight: 800, letterSpacing: '0.12em', cursor: 'pointer',
+              background: liveMode ? 'linear-gradient(135deg, rgba(239,68,68,0.28), rgba(239,68,68,0.10))' : 'linear-gradient(135deg, rgba(34,197,94,0.24), rgba(34,197,94,0.08))',
+              color: liveMode ? '#f87171' : '#4ade80',
+              border: `1px solid ${liveMode ? 'rgba(239,68,68,0.5)' : 'rgba(34,197,94,0.45)'}`,
+              boxShadow: liveMode ? '0 0 22px -6px rgba(239,68,68,0.8)' : '0 0 22px -8px rgba(34,197,94,0.7)',
+            }}>
+              <span className="pulse-dot" />
+              {liveMode ? 'LIVE' : 'PAPER'}
+            </button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--c-border)', marginBottom: 0, overflowX: 'auto' }}>
-          <button style={TAB_STYLE(tab === 'scan')} onClick={() => setTab('scan')}>📡 Scan</button>
-          <button style={TAB_STYLE(tab === 'radar')} onClick={() => setTab('radar')}>🔭 Radar</button>
-          <button style={TAB_STYLE(tab === 'calc')} onClick={() => setTab('calc')}>📐 Calc</button>
-          <button style={TAB_STYLE(tab === 'trades')} onClick={() => setTab('trades')}>
-            📒{trades.some(t => t.status === 'open') ? ` (${trades.filter(t => t.status === 'open').length})` : ' Trades'}
-          </button>
-          <button style={TAB_STYLE(tab === 'log')} onClick={() => setTab('log')}>
-            📋{trades.length > 0 ? ` (${trades.length})` : ' Log'}
-          </button>
-          <button style={TAB_STYLE(tab === 'settings')} onClick={() => setTab('settings')}>⚙️</button>
+        <div style={{
+          display: 'flex', gap: 4, padding: 4, borderRadius: 16, overflowX: 'auto',
+          background: 'var(--c-inner)', border: '1px solid var(--c-border)',
+        }}>
+          {TABS.map(t => (
+            <button key={t.id} className={`tab-pill ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
+              <span style={{ opacity: 0.85, marginRight: 5, fontSize: 12 }}>{t.icon}</span>{t.label}
+              {t.badge !== undefined && (
+                <span style={{
+                  marginLeft: 6, padding: '1px 6px', borderRadius: 999, fontSize: 9, fontWeight: 800,
+                  background: tab === t.id ? 'rgba(255,255,255,0.22)' : 'rgba(99,102,241,0.18)',
+                  color: tab === t.id ? '#fff' : '#a5b4fc',
+                }}>{t.badge}</span>
+              )}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -1376,6 +1574,18 @@ export default function Home() {
               })()}
             </div>
 
+            {/* Collapsed markets bar (after a scan) */}
+            {result?.ok && !marketsOpen && (
+              <button onClick={() => setMarketsOpen(true)} className="glass row-hover" style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                padding: '10px 14px', cursor: 'pointer', color: 'var(--c-muted)', fontSize: 12, fontWeight: 700, textAlign: 'left', width: '100%',
+              }}>
+                <span>▸ Market groups · Autoscan{autoScan?.alerts?.length ? ` · ${autoScan.alerts.length} alert${autoScan.alerts.length > 1 ? 's' : ''} ≥80` : ''}</span>
+                <span className="eyebrow" style={{ fontSize: 9 }}>{Object.keys(marketOv).length ? `${Object.keys(marketOv).length} scored` : 'tap to expand'}</span>
+              </button>
+            )}
+
+            {(marketsOpen || !result?.ok) && (<>
             {/* Market overview: grouped, collapsible, sortable */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
               <span style={{ fontSize: 11, color: 'var(--c-faintest)' }}>
@@ -1497,7 +1707,7 @@ export default function Home() {
             </div>
 
             {/* Autoscan panel */}
-            <div style={{ padding: 14, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+            <div className="glass" style={{ padding: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                 <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)' }}>⚡ AUTOSCAN</span>
                 <span style={{ fontSize: 11, color: 'var(--c-faint)' }}>every 15 min · score ≥ 80</span>
@@ -1538,6 +1748,7 @@ export default function Home() {
                 </>
               )}
             </div>
+            </>)}
 
             {/* Error */}
             {result?.error && (
@@ -1549,45 +1760,123 @@ export default function Home() {
             {/* Result */}
             {result?.ok && (
               <>
-                {/* Symbol header */}
-                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <span style={{ fontWeight: 800, fontSize: 20 }}>{result.symbol}</span>
-                      <span style={{ color: 'var(--c-faint)', marginLeft: 8, fontSize: 13 }}>PERP</span>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: 700, fontSize: 20 }}>${result.price.toFixed(4)}</div>
-                      <div style={{ fontSize: 12, color: result.change24h >= 0 ? '#22c55e' : '#ef4444' }}>
-                        {result.change24h >= 0 ? '+' : ''}{result.change24h.toFixed(2)}% 24h
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                {/* ── HERO: symbol · price · direction · setup quality ring ── */}
+                {(() => {
+                  const isNoTrade = result.direction === 'NEUTRAL';
+                  const heroC = isNoTrade ? '#f59e0b' : dirColor;
+                  const arrow = result.direction === 'LONG' ? '▲' : result.direction === 'SHORT' ? '▼' : '⏸';
+                  const dirText = isNoTrade ? 'NO TRADE' : result.direction;
+                  const tier = result.totalScore >= 85 ? 'A+' : result.totalScore >= 75 ? 'A' : result.totalScore >= 65 ? 'B' : result.totalScore >= 50 ? 'C' : 'D';
+                  return (
+                    <div className="glass glass-accent fade-up" style={{ ['--accent-c' as string]: heroC, padding: 0, overflow: 'hidden' }}>
+                      <div style={{
+                        position: 'absolute', inset: 0, pointerEvents: 'none',
+                        background: `radial-gradient(60% 80% at 100% 0%, ${heroC}26 0%, transparent 60%), radial-gradient(40% 60% at 0% 100%, ${heroC}14 0%, transparent 60%)`,
+                      }} />
+                      <div style={{ position: 'relative', padding: '18px 18px 16px', display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div style={{ flex: 1, minWidth: 220 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            <span style={{ fontWeight: 900, fontSize: 28, letterSpacing: '-0.04em', color: 'var(--c-text)', lineHeight: 1 }}>{result.symbol.replace('USDT', '')}</span>
+                            <span className="eyebrow" style={{ padding: '3px 8px', borderRadius: 6, background: 'var(--c-inner)', border: '1px solid var(--c-border)' }}>USDT PERP</span>
+                            <span className="chip" style={{ background: `${tier === 'A+' || tier === 'A' ? '#f59e0b' : '#6366f1'}22`, color: tier === 'A+' || tier === 'A' ? '#fbbf24' : '#a5b4fc', borderColor: `${tier === 'A+' || tier === 'A' ? '#f59e0b' : '#6366f1'}55` }}>TIER {tier}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 10 }}>
+                            <span className="mono" style={{ fontSize: 30, fontWeight: 800, color: 'var(--c-text)', letterSpacing: '-0.03em', lineHeight: 1 }}>${fmtPx(result.price)}</span>
+                            <span className="mono" style={{
+                              fontSize: 12, fontWeight: 800, padding: '3px 8px', borderRadius: 6,
+                              background: result.change24h >= 0 ? 'rgba(34,197,94,0.14)' : 'rgba(239,68,68,0.14)',
+                              color: result.change24h >= 0 ? '#4ade80' : '#f87171',
+                            }}>
+                              {result.change24h >= 0 ? '+' : ''}{result.change24h.toFixed(2)}% 24h
+                            </span>
+                          </div>
 
-                {/* Direction + score */}
-                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                    <span style={{
-                      padding: '5px 16px', borderRadius: 20, fontWeight: 800, fontSize: 16,
-                      background: `${dirColor}22`, color: dirColor, border: `1px solid ${dirColor}44`,
-                    }}>
-                      {result.direction === 'LONG' ? '▲' : result.direction === 'SHORT' ? '▼' : '—'} {result.direction}
-                    </span>
-                    <span style={{ color: 'var(--c-dim)', fontSize: 12 }}>{result.bestSetup} · {result.alignmentQuality}</span>
-                  </div>
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-                      <span style={{ color: 'var(--c-dim)', fontSize: 12 }}>Signal Score</span>
-                      <span style={{ color: 'var(--c-dim)', fontSize: 12 }}>Confidence {result.confidence}%</span>
+                          <div style={{ marginTop: 16, display: 'inline-flex', alignItems: 'center', gap: 12,
+                            padding: '10px 18px 10px 14px', borderRadius: 14,
+                            background: `linear-gradient(135deg, ${heroC}30, ${heroC}10)`,
+                            border: `1px solid ${heroC}66`, boxShadow: `0 0 34px -8px ${heroC}`,
+                          }}>
+                            <span style={{ fontSize: 26, color: heroC, lineHeight: 1, filter: `drop-shadow(0 0 10px ${heroC})` }}>{arrow}</span>
+                            <div>
+                              <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: '0.04em', color: heroC, lineHeight: 1 }}>{dirText}</div>
+                              <div style={{ fontSize: 10, color: 'var(--c-dim)', marginTop: 4, fontWeight: 600, letterSpacing: '0.08em' }}>
+                                {isNoTrade ? 'TIMEFRAMES DISAGREE · STAND ASIDE' : `${result.bestSetup} · ${result.alignmentQuality.toUpperCase()}`}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                          <ScoreRing value={result.totalScore} size={126} label="Setup Quality" sub={`${result.confidence}% conf`} />
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <MiniRing value={result.alignmentScore} size={58} color="#a5b4fc" label="Align" caption="6 TF" />
+                            <MiniRing value={Math.min(100, result.masterSignal.netRR / 4 * 100)} size={58} color={result.masterSignal.netRR >= 2 ? '#22c55e' : '#eab308'} label={`${result.masterSignal.netRR.toFixed(1)}R`} caption="net R:R" />
+                          </div>
+                        </div>
+                      </div>
+
+                      {isNoTrade && (
+                        <div style={{ position: 'relative', padding: '10px 18px', borderTop: '1px solid var(--c-border)', background: 'rgba(245,158,11,0.08)', fontSize: 12, color: '#fbbf24', fontWeight: 600 }}>
+                          Multi-timeframe bias is split. The engine refuses to pick a side for you — capital preservation is the trade. Re-scan after the next 1h close.
+                        </div>
+                      )}
                     </div>
-                    <ScoreBar score={result.totalScore} />
-                  </div>
-                  <div>
-                    <div style={{ color: 'var(--c-dim)', fontSize: 12, marginBottom: 5 }}>Alignment {result.alignmentScore.toFixed(0)}%</div>
-                    <ScoreBar score={result.alignmentScore} />
-                  </div>
-                </div>
+                  );
+                })()}
+
+                {/* ── HISTORICAL EDGE ─────────────────────────────────────── */}
+                {(() => {
+                  const closed = trades.filter(t => t.status !== 'open');
+                  const bySym = closed.filter(t => t.symbol === result.symbol);
+                  const byDir = closed.filter(t => t.direction === result.direction && t.bestSetup === result.bestSetup);
+                  const sample = bySym.length >= 5 ? bySym : byDir.length >= 5 ? byDir : closed;
+                  const scope  = bySym.length >= 5 ? `${result.symbol.replace('USDT','')} only` : byDir.length >= 5 ? `${result.direction} · ${result.bestSetup}` : 'all closed trades';
+                  const n = sample.length;
+                  const MIN = 5;
+                  const ready = n >= MIN;
+                  const rate = (f: (t: TradeEntry) => boolean) => ready ? Math.round(sample.filter(f).length / n * 100) : null;
+                  const tp1R = rate(t => !!t.tp1Hit || t.status === 'tp3');
+                  const tp2R = rate(t => !!t.tp2Hit || t.status === 'tp3');
+                  const tp3R = rate(t => !!t.tp3Hit || t.status === 'tp3');
+                  const pnls = sample.map(t => t.pnlDollars ?? 0);
+                  const wins = pnls.filter(p => p > 0), losses = pnls.filter(p => p < 0);
+                  const expectancy = ready ? pnls.reduce((a, b) => a + b, 0) / n : null;
+                  const grossW = wins.reduce((a, b) => a + b, 0), grossL = Math.abs(losses.reduce((a, b) => a + b, 0));
+                  const pf = ready ? (grossL > 0 ? grossW / grossL : grossW > 0 ? Infinity : 0) : null;
+                  const winRate = ready ? Math.round(wins.length / n * 100) : null;
+                  return (
+                    <div className="glass fade-up d1" style={{ padding: 16 }}>
+                      <SectionTitle accent="#a855f7" title="Historical Edge"
+                        right={<span className="eyebrow" style={{ fontSize: 9 }}>{ready ? `${n} samples · ${scope}` : `ENGINE PENDING · ${n}/${MIN} samples`}</span>} />
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(72px, 1fr))', gap: 10, alignItems: 'start' }}>
+                        <MiniRing value={winRate} size={66} color="#a5b4fc" label="Win" caption="any TP" />
+                        <MiniRing value={tp1R} size={66} color="#4ade80" label="TP1" caption="50% off" />
+                        <MiniRing value={tp2R} size={66} color="#22c55e" label="TP2" caption="2R target" />
+                        <MiniRing value={tp3R} size={66} color="#16a34a" label="TP3" caption="runner" />
+                        <div className="stat-tile" style={{ textAlign: 'center' }}>
+                          <div className="eyebrow" style={{ fontSize: 8 }}>Expectancy</div>
+                          <div className="mono" style={{ fontSize: 16, fontWeight: 800, marginTop: 4, color: expectancy === null ? 'var(--c-faintest)' : expectancy >= 0 ? '#4ade80' : '#f87171' }}>
+                            {expectancy === null ? '—' : `${expectancy >= 0 ? '+' : ''}${fmtUsd(expectancy)}`}
+                          </div>
+                          <div style={{ fontSize: 9, color: 'var(--c-faintest)' }}>per trade</div>
+                        </div>
+                        <div className="stat-tile" style={{ textAlign: 'center' }}>
+                          <div className="eyebrow" style={{ fontSize: 8 }}>Profit Factor</div>
+                          <div className="mono" style={{ fontSize: 16, fontWeight: 800, marginTop: 4, color: pf === null ? 'var(--c-faintest)' : pf >= 1.5 ? '#4ade80' : pf >= 1 ? '#fbbf24' : '#f87171' }}>
+                            {pf === null ? '—' : pf === Infinity ? '∞' : pf.toFixed(2)}
+                          </div>
+                          <div style={{ fontSize: 9, color: 'var(--c-faintest)' }}>gross W / L</div>
+                        </div>
+                      </div>
+                      {!ready && (
+                        <div style={{ marginTop: 12, position: 'relative', overflow: 'hidden', borderRadius: 8, padding: '8px 12px', background: 'var(--c-inner)', border: '1px dashed var(--c-border)', fontSize: 11, color: 'var(--c-dim)' }}>
+                          <div className="shimmer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+                          Probabilities unlock after {MIN} closed trades. Until then, treat Setup Quality as a ranking — not a win probability. Log every trade, including paper.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ── BOTH DIRECTIONS SIGNAL COMPARISON ───────────── */}
                 {(() => {
@@ -1619,7 +1908,7 @@ export default function Home() {
                   ];
 
                   return (
-                    <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                    <div className="glass" style={{ padding: 16 }}>
                       <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: 'var(--c-muted)' }}>SIGNALS — BOTH DIRECTIONS</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                         {sides.map(({ dir, color, stopLoss, tp1, tp2, tp3 }) => {
@@ -1741,7 +2030,6 @@ export default function Home() {
                     ? liqPrice > ms.stopLoss
                     : liqPrice < ms.stopLoss;
                   const maxSafeLev = Math.floor(1 / (slDist + MMR));
-                  const fmt = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
 
                   // P&L per level — use manual margin or risk-based sizing
                   const riskAmt = accountSize * riskPct / 100;
@@ -1751,50 +2039,85 @@ export default function Home() {
                   const pnl = (price: number) =>
                     qty * (price - ms.entry) * (result.direction === 'LONG' ? 1 : -1);
 
-                  const levels = [
-                    { label: 'Entry',     value: ms.entry,    pnlVal: null,                color: 'var(--c-text)', pct: null },
-                    { label: 'Stop Loss', value: ms.stopLoss, pnlVal: pnl(ms.stopLoss),    color: '#ef4444', pct: -(slDist * 100) },
-                    { label: 'TP1 · 50%', value: ms.tp1,      pnlVal: pnl(ms.tp1),         color: '#4ade80', pct: Math.abs(ms.tp1 - ms.entry) / ms.entry * 100 },
-                    { label: 'TP2 · 25%', value: ms.tp2,      pnlVal: pnl(ms.tp2),         color: '#22c55e', pct: Math.abs(ms.tp2 - ms.entry) / ms.entry * 100 },
-                    { label: 'TP3 · 25%', value: ms.tp3,      pnlVal: pnl(ms.tp3),         color: '#16a34a', pct: Math.abs(ms.tp3 - ms.entry) / ms.entry * 100 },
-                    { label: 'Net R:R',   value: null,         pnlVal: null,                color: '#6366f1', pct: null },
-                  ];
+                  const isNoTradeLv = result.direction === 'NEUTRAL';
+                  const notional = qty * ms.entry;
+                  const marginAt = (lev: number) => notional / lev;
+                  const MAKER = 0.0002, TAKER = 0.00055;
+                  const entryFee = notional * (orderType === 'Limit' ? MAKER : TAKER);
+                  const netAt = (price: number, frac = 1) => {
+                    const gross = pnl(price) * frac;
+                    const exitFee = qty * frac * price * TAKER;
+                    return gross - entryFee * frac - exitFee;
+                  };
+                  const slNet   = netAt(ms.stopLoss);
+                  const tp1Net  = netAt(ms.tp1), tp2Net = netAt(ms.tp2), tp3Net = netAt(ms.tp3);
+                  const stagedNet = netAt(ms.tp1, 0.5) + netAt(ms.tp2, 0.25) + netAt(ms.tp3, 0.25);
+                  const rrNet = slNet < 0 ? stagedNet / Math.abs(slNet) : 0;
 
                   return (
-                    <div style={{ padding: 16, background: 'var(--c-card)', border: `1px solid ${liqBeforeSL ? '#ef444444' : 'var(--c-border)'}`, borderRadius: 10 }}>
-                      <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: 'var(--c-muted)' }}>TRADE LEVELS</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 7 }}>
-                        {levels.map(({ label, value, pnlVal, color, pct }) => (
-                          <div key={label} style={{ padding: '9px 10px', background: 'var(--c-inner)', borderRadius: 7, borderTop: `2px solid ${color}33` }}>
-                            <div style={{ color: 'var(--c-faint)', fontSize: 10, marginBottom: 3 }}>{label}</div>
-                            <div style={{ color, fontWeight: 800, fontSize: 13 }}>
-                              {value !== null ? `$${fmt(value)}` : `${ms.netRR.toFixed(2)}×`}
-                            </div>
-                            {pct !== null && (
-                              <div style={{ fontSize: 10, color: color, opacity: 0.7, marginTop: 1 }}>
-                                {pct > 0 ? '+' : ''}{pct.toFixed(2)}%
+                    <div className="glass fade-up d2" style={{ padding: 16, borderColor: liqBeforeSL ? 'rgba(239,68,68,0.5)' : undefined }}>
+                      <SectionTitle accent={dirColor} title="Price Ladder"
+                        right={<span className="eyebrow" style={{ fontSize: 9 }}>{effLev}× · liq {(liqDist * 100).toFixed(1)}% away</span>} />
+                      {isNoTradeLv ? (
+                        <div style={{ padding: '14px 12px', textAlign: 'center', color: 'var(--c-faint)', fontSize: 12, background: 'var(--c-inner)', borderRadius: 10, border: '1px dashed var(--c-border)' }}>
+                          No ladder — engine has no directional edge here.
+                        </div>
+                      ) : (
+                        <PriceLadder direction={result.direction} entry={ms.entry} stopLoss={ms.stopLoss} tp1={ms.tp1} tp2={ms.tp2} tp3={ms.tp3}
+                          liq={liqPrice} pnl={qty > 0 ? (p) => netAt(p) : undefined} />
+                      )}
+
+                      {/* YOUR TRADE — dollar flow */}
+                      {!isNoTradeLv && qty > 0 && (
+                        <div style={{ marginTop: 6, padding: 14, borderRadius: 14, background: 'var(--c-inner)', border: '1px solid var(--c-border)' }}>
+                          <SectionTitle title="Your Trade" accent="#6366f1"
+                            right={<span className="eyebrow" style={{ fontSize: 9, color: '#a5b4fc' }}>{fmtUsd(accountSize, 0)} acct · {riskPct}% risk · {orderType.toLowerCase()} in / taker out</span>} />
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+                            {[
+                              { k: 'Risk',     v: fmtUsd(riskAmt, 0),        c: '#f87171', sub: 'max loss at SL' },
+                              { k: 'Notional', v: fmtUsd(notional, 0),       c: 'var(--c-text)', sub: `${qty < 1 ? qty.toFixed(4) : qty.toFixed(2)} ${result.symbol.replace('USDT','')}` },
+                              { k: `Margin @${effLev}×`, v: fmtUsd(marginAt(effLev), 0), c: '#a5b4fc', sub: `3× ${fmtUsd(marginAt(3), 0)} · 5× ${fmtUsd(marginAt(5), 0)}` },
+                            ].map((s, i) => (
+                              <div key={s.k} className="stat-tile" style={{ position: 'relative', padding: '10px 10px' }}>
+                                {i > 0 && <span style={{ position: 'absolute', left: -7, top: '50%', transform: 'translateY(-50%)', color: 'var(--c-faintest)', fontSize: 11 }}>›</span>}
+                                <div className="eyebrow" style={{ fontSize: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.k}</div>
+                                <div className="mono" style={{ fontSize: 16, fontWeight: 800, color: s.c, marginTop: 2 }}>{s.v}</div>
+                                <div style={{ fontSize: 9, color: 'var(--c-faintest)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.sub}</div>
                               </div>
-                            )}
-                            {pnlVal !== null && qty > 0 && (
-                              <div style={{ fontSize: 11, fontWeight: 700, color: pnlVal >= 0 ? '#22c55e' : '#ef4444', marginTop: 3 }}>
-                                {pnlVal >= 0 ? '+' : ''}${Math.abs(pnlVal).toFixed(2)}
-                              </div>
-                            )}
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginTop: 8 }}>
+                            {[
+                              { k: 'SL hit',   v: slNet,  c: '#f87171' },
+                              { k: 'TP1 net',  v: tp1Net, c: '#4ade80' },
+                              { k: 'TP2 net',  v: tp2Net, c: '#22c55e' },
+                              { k: 'TP3 net',  v: tp3Net, c: '#16a34a' },
+                            ].map(s => (
+                              <div key={s.k} style={{ padding: '8px 10px', borderRadius: 10, background: `${s.c}12`, border: `1px solid ${s.c}33`, textAlign: 'center' }}>
+                                <div className="eyebrow" style={{ fontSize: 8, color: s.c }}>{s.k}</div>
+                                <div className="mono" style={{ fontSize: 14, fontWeight: 800, color: s.c, marginTop: 2 }}>{s.v >= 0 ? '+' : ''}{fmtUsd(s.v)}</div>
+                              </div>
+                            ))}
+                          </div>
+                          <div style={{ marginTop: 8, padding: '9px 12px', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                            background: 'linear-gradient(135deg, rgba(99,102,241,0.18), rgba(124,58,237,0.08))', border: '1px solid rgba(129,140,248,0.35)' }}>
+                            <span style={{ fontSize: 11, color: 'var(--c-muted)', fontWeight: 600 }}>Staged plan 50 / 25 / 25 — all targets, after fees</span>
+                            <span className="mono" style={{ fontSize: 15, fontWeight: 900, color: '#c7d2fe' }}>+{fmtUsd(stagedNet)} <span style={{ fontSize: 10, color: '#a5b4fc', fontWeight: 700 }}>· {rrNet.toFixed(2)}R net</span></span>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Liquidation row */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-                        <div style={{ padding: '8px 12px', background: liqBeforeSL ? '#ef444422' : 'var(--c-inner)', border: `1px solid ${liqBeforeSL ? '#ef444455' : 'transparent'}`, borderRadius: 6 }}>
-                          <div style={{ color: 'var(--c-faint)', fontSize: 11 }}>Liquidation @ {effLev}×</div>
-                          <div style={{ color: '#ef4444', fontWeight: 700, fontSize: 14 }}>${fmt(liqPrice)}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+                        <div className="stat-tile" style={{ background: liqBeforeSL ? 'rgba(239,68,68,0.14)' : undefined, borderColor: liqBeforeSL ? 'rgba(239,68,68,0.5)' : undefined }}>
+                          <div className="eyebrow" style={{ fontSize: 8 }}>Liquidation @ {effLev}×</div>
+                          <div className="mono" style={{ color: '#f87171', fontWeight: 800, fontSize: 15 }}>${fmtPx(liqPrice)}</div>
                           <div style={{ color: 'var(--c-faint)', fontSize: 10, marginTop: 2 }}>{(liqDist * 100).toFixed(1)}% from entry · MMR 0.5%</div>
                         </div>
-                        <div style={{ padding: '8px 12px', background: 'var(--c-inner)', borderRadius: 6 }}>
-                          <div style={{ color: 'var(--c-faint)', fontSize: 11 }}>Rec. Leverage</div>
-                          <div style={{ color: '#6366f1', fontWeight: 700, fontSize: 14 }}>{ms.leverage}×</div>
-                          <div style={{ color: 'var(--c-faint)', fontSize: 10, marginTop: 2 }}>Your setting: {effLev}×</div>
+                        <div className="stat-tile">
+                          <div className="eyebrow" style={{ fontSize: 8 }}>Leverage</div>
+                          <div className="mono" style={{ color: '#a5b4fc', fontWeight: 800, fontSize: 15 }}>{effLev}× <span style={{ fontSize: 10, color: 'var(--c-faint)', fontWeight: 600 }}>engine {ms.leverage}× · max safe {maxSafeLev}×</span></div>
+                          <div style={{ color: 'var(--c-faint)', fontSize: 10, marginTop: 2 }}>Leverage changes margin, not risk. Risk is set by the stop.</div>
                         </div>
                       </div>
 
@@ -1804,7 +2127,7 @@ export default function Home() {
                             🚨 LIQUIDATION BEFORE STOP LOSS
                           </div>
                           <div style={{ color: '#fca5a5', fontSize: 12, lineHeight: 1.5 }}>
-                            At {effLev}× leverage, you get liquidated at ${fmt(liqPrice)} before your stop loss at ${fmt(ms.stopLoss)} triggers.
+                            At {effLev}× leverage, you get liquidated at ${fmtPx(liqPrice)} before your stop loss at ${fmtPx(ms.stopLoss)} triggers.
                             Reduce leverage to <strong>{maxSafeLev}× or below</strong> for this SL to protect your position.
                           </div>
                         </div>
@@ -1819,36 +2142,53 @@ export default function Home() {
                   );
                 })()}
 
-                {/* Structure */}
-                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13, color: 'var(--c-muted)' }}>STRUCTURE</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-                    <Badge ok={result.deep.hasBOS}   label="BOS" />
-                    <Badge ok={result.deep.hasOB}    label="Order Block" />
-                    <Badge ok={result.deep.hasFVG}   label="FVG" />
-                    <Badge ok={result.deep.hasChoCH} label="CHoCH" />
-                    <Badge ok={result.deep.hasSweep} label="Liq. Sweep" />
-                    <Badge ok={result.deep.macdBull || result.deep.macdBear} label="MACD" />
-                    <Badge ok={result.deep.vwapAbove === (result.direction === 'LONG')} label="VWAP aligned" />
-                    <Badge ok={result.deep.volRatio >= 1.5} label={`Vol ${result.deep.volRatio.toFixed(1)}×`} />
-                  </div>
-                  <div style={{ display: 'flex', gap: 20, fontSize: 13 }}>
-                    <div>
-                      <span style={{ color: 'var(--c-dim)' }}>RSI </span>
-                      <span style={{ color: result.deep.rsi > 70 ? '#ef4444' : result.deep.rsi < 30 ? '#22c55e' : 'var(--c-text)', fontWeight: 700 }}>
-                        {result.deep.rsi.toFixed(1)}
-                        {result.deep.rsi > 70 ? ' ⚠ Overbought' : result.deep.rsi < 30 ? ' ⚠ Oversold' : ''}
-                      </span>
+                {/* Confluence */}
+                {(() => {
+                  const d = result.deep;
+                  const isL = result.direction === 'LONG';
+                  const macdAligned = isL ? d.macdBull : result.direction === 'SHORT' ? d.macdBear : false;
+                  const items = [
+                    { ok: d.hasBOS,   label: 'Break of Structure', w: '+16' },
+                    { ok: d.hasChoCH, label: 'CHoCH',             w: '+8' },
+                    { ok: d.hasOB,    label: 'Order Block',       w: '+8' },
+                    { ok: d.hasFVG,   label: 'Fair Value Gap',    w: '+6' },
+                    { ok: d.hasSweep, label: 'Liquidity Sweep',   w: '+10' },
+                    { ok: macdAligned, label: 'MACD aligned',     w: '+8' },
+                    { ok: d.vwapAbove === isL && result.direction !== 'NEUTRAL', label: 'VWAP side', w: '+5' },
+                    { ok: d.volRatio >= 1.5, label: `Volume ${d.volRatio.toFixed(1)}×`, w: '+5' },
+                  ];
+                  const onCount = items.filter(i => i.ok).length;
+                  const rsiC = d.rsi > 70 ? '#f87171' : d.rsi < 30 ? '#4ade80' : 'var(--c-text)';
+                  return (
+                    <div className="glass fade-up d3" style={{ padding: 16 }}>
+                      <SectionTitle accent="#22c55e" title="Confluence"
+                        right={<span className="mono" style={{ fontSize: 11, fontWeight: 800, color: onCount >= 5 ? '#4ade80' : onCount >= 3 ? '#fbbf24' : '#f87171' }}>{onCount}/{items.length} firing</span>} />
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                        {items.map(i => <Confluence key={i.label} ok={i.ok} label={i.label} weight={i.w} />)}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <div className="stat-tile">
+                          <div className="eyebrow" style={{ fontSize: 8 }}>RSI 14</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                            <span className="mono" style={{ fontSize: 18, fontWeight: 800, color: rsiC }}>{d.rsi.toFixed(1)}</span>
+                            <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'linear-gradient(90deg, #22c55e 0%, #22c55e 30%, var(--c-border) 30%, var(--c-border) 70%, #ef4444 70%)', position: 'relative' }}>
+                              <div style={{ position: 'absolute', left: `${Math.min(100, Math.max(0, d.rsi))}%`, top: -3, width: 12, height: 12, borderRadius: '50%', background: '#fff', transform: 'translateX(-50%)', boxShadow: '0 0 8px #fff' }} />
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 9, color: 'var(--c-faint)', marginTop: 3 }}>{d.rsi > 70 ? 'Overbought — chase risk' : d.rsi < 30 ? 'Oversold — bounce risk' : 'Neutral zone'}</div>
+                        </div>
+                        <div className="stat-tile">
+                          <div className="eyebrow" style={{ fontSize: 8 }}>Wyckoff Phase</div>
+                          <div style={{ fontSize: 13, fontWeight: 800, marginTop: 4, color: d.wyckoffPhase.includes('ACCUM') ? '#4ade80' : d.wyckoffPhase.includes('DISTRIB') ? '#f87171' : 'var(--c-text)' }}>{d.wyckoffPhase}</div>
+                          <div style={{ fontSize: 9, color: 'var(--c-faint)', marginTop: 3 }}>Composite-operator read</div>
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <span style={{ color: 'var(--c-dim)' }}>Wyckoff </span>
-                      <span style={{ fontWeight: 600 }}>{result.deep.wyckoffPhase}</span>
-                    </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* ── AI DEEP ANALYSIS ────────────────────────────────── */}
-                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                <div className="glass" style={{ padding: 16 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                     <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)' }}>🤖 AI DEEP ANALYSIS</span>
                     <button onClick={getAiExplain} disabled={aiLoading} style={{
@@ -1936,7 +2276,7 @@ export default function Home() {
                     ratio <= 3   ? '2–3 days' : '3+ days';
 
                   return (
-                    <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                    <div className="glass" style={{ padding: 16 }}>
                       <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)', marginBottom: 14, letterSpacing: '0.06em' }}>
                         AVG HISTORICAL RANGE
                       </div>
@@ -2053,14 +2393,9 @@ export default function Home() {
 
                 {/* ── TRADE EXECUTION ─────────────────────────────────── */}
                 {canTrade && (
-                  <div style={{
-                    padding: 16, borderRadius: 10,
-                    background: result.direction === 'LONG' ? '#052e1611' : '#450a0a11',
-                    border: `2px solid ${result.direction === 'LONG' ? '#16a34a55' : '#ef444455'}`,
-                  }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: dirColor, marginBottom: 14 }}>
-                      {result.direction === 'LONG' ? '▲' : '▼'} ENTER {result.direction} — {result.symbol}
-                    </div>
+                  <div className="glass glass-accent fade-up d4" style={{ ['--accent-c' as string]: dirColor, padding: 16 }}>
+                    <SectionTitle accent={dirColor} title={`Execute ${result.direction} · ${result.symbol.replace('USDT','')}`}
+                      right={<span className="eyebrow" style={{ fontSize: 9, color: liveMode ? '#f87171' : '#4ade80' }}>{liveMode ? '⚡ live order' : 'paper sim'}</span>} />
 
                     {/* Sizing row */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 8 }}>
@@ -2170,15 +2505,15 @@ export default function Home() {
                     </div>
 
                     {/* BIG BUTTON */}
-                    <button onClick={enterTrade} disabled={tradeLoading} style={{
-                      width: '100%', padding: '14px 0', border: 'none', borderRadius: 8,
-                      fontWeight: 800, fontSize: 16, letterSpacing: '0.5px',
+                    <button className="btn-glow" onClick={enterTrade} disabled={tradeLoading} style={{
+                      width: '100%', padding: '16px 0', border: 'none', borderRadius: 14,
+                      fontWeight: 900, fontSize: 16, letterSpacing: '0.08em',
                       cursor: tradeLoading ? 'not-allowed' : 'pointer',
                       background: tradeLoading ? 'var(--c-border)'
-                        : result.direction === 'LONG' ? 'linear-gradient(135deg, #16a34a, #15803d)'
-                        : 'linear-gradient(135deg, #dc2626, #b91c1c)',
+                        : result.direction === 'LONG' ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 60%, #15803d 100%)'
+                        : 'linear-gradient(135deg, #f87171 0%, #dc2626 60%, #b91c1c 100%)',
                       color: tradeLoading ? 'var(--c-faint)' : '#fff',
-                      boxShadow: tradeLoading ? 'none' : `0 4px 20px ${result.direction === 'LONG' ? '#16a34a44' : '#dc262644'}`,
+                      boxShadow: tradeLoading ? 'none' : `0 12px 36px -10px ${result.direction === 'LONG' ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)'}, 0 0 0 1px rgba(255,255,255,0.12) inset`,
                     }}>
                       {tradeLoading ? 'Placing order…'
                         : `${result.direction === 'LONG' ? '▲ BUY LONG' : '▼ SELL SHORT'} ${result.symbol}`}
@@ -2200,6 +2535,31 @@ export default function Home() {
                     {tradeResult.message && <div style={{ color: 'var(--c-subtle)', fontSize: 13, marginBottom: 6 }}>{tradeResult.message}</div>}
                     {tradeResult.error && <div style={{ color: '#ef4444', fontSize: 13 }}>{tradeResult.error}</div>}
                     {tradeResult.leverageWarning && <div style={{ color: '#eab308', fontSize: 12, marginBottom: 6 }}>{tradeResult.leverageWarning}</div>}
+                    {tradeResult.warnings?.map((w, i) => (
+                      <div key={i} style={{ padding: '6px 10px', marginBottom: 6, borderRadius: 8, background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.35)', color: '#fbbf24', fontSize: 11, fontWeight: 600 }}>⚠ {w}</div>
+                    ))}
+                    {(tradeResult.slVerified || tradeResult.tpStatus) && (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                        {tradeResult.slVerified && (
+                          <span className="chip" style={{ background: tradeResult.slVerified === 'verified' || tradeResult.slVerified === 're-attached' ? 'rgba(34,197,94,0.16)' : 'rgba(234,179,8,0.16)', color: tradeResult.slVerified === 'verified' || tradeResult.slVerified === 're-attached' ? '#4ade80' : '#fbbf24', borderColor: 'transparent' }}>
+                            STOP {tradeResult.slVerified.toUpperCase()}
+                          </span>
+                        )}
+                        {tradeResult.tpStatus?.map(t => (
+                          <span key={t.tp} className="chip" title={t.msg} style={{ background: t.ok ? 'rgba(34,197,94,0.16)' : 'rgba(239,68,68,0.16)', color: t.ok ? '#4ade80' : '#f87171', borderColor: 'transparent' }}>
+                            {t.tp} {t.ok ? '✓' : '✗'}{t.qty ? ` ${t.qty}` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {(tradeResult.notional || tradeResult.netIfAllTargets) && (
+                      <div className="mono" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 11, marginBottom: 6, color: 'var(--c-muted)' }}>
+                        {tradeResult.notional && <span>Notional <b style={{ color: 'var(--c-text)' }}>${tradeResult.notional}</b></span>}
+                        {tradeResult.margin && <span>Margin <b style={{ color: '#a5b4fc' }}>${tradeResult.margin}</b></span>}
+                        {tradeResult.netIfAllTargets && <span>All targets <b style={{ color: '#4ade80' }}>+${tradeResult.netIfAllTargets}</b></span>}
+                        {tradeResult.netIfStopped && <span>Stopped <b style={{ color: '#f87171' }}>{tradeResult.netIfStopped}</b></span>}
+                      </div>
+                    )}
                     {(tradeResult.paper || tradeResult.success) && (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 12, color: 'var(--c-muted)' }}>
                         {tradeResult.orderId && <div>Order ID: <span style={{ color: 'var(--c-text)' }}>{tradeResult.orderId}</span></div>}
@@ -2228,12 +2588,31 @@ export default function Home() {
                 )}
 
                 {/* Verdict */}
-                <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 13, color: 'var(--c-muted)' }}>VERDICT</div>
-                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.8, color: 'var(--c-subtle)', margin: 0 }}>
-                    {result.verdict}
-                  </pre>
-                </div>
+                {(() => {
+                  const s = result.totalScore;
+                  const noTrade = result.direction === 'NEUTRAL';
+                  const v = noTrade ? { label: 'NO TRADE', c: '#f59e0b', line: 'Bias is split across timeframes. Sitting out is a position.' }
+                    : s >= 80 ? { label: 'EXECUTE', c: '#22c55e', line: 'A-grade confluence. Take it at planned size — no hesitation, no oversizing.' }
+                    : s >= 65 ? { label: 'CONDITIONAL', c: '#eab308', line: 'Playable, but only on a confirming 15m close in your direction. Half size.' }
+                    : s >= 50 ? { label: 'WATCHLIST', c: '#f97316', line: 'Not enough confluence. Set an alert at the trigger level and walk away.' }
+                    : { label: 'PASS', c: '#ef4444', line: 'Low-quality setup. The best trade here is no trade.' };
+                  return (
+                    <div className="glass glass-accent fade-up d5" style={{ ['--accent-c' as string]: v.c, padding: 0, overflow: 'hidden' }}>
+                      <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 14, borderBottom: '1px solid var(--c-border)',
+                        background: `linear-gradient(90deg, ${v.c}1f, transparent 70%)` }}>
+                        <div style={{ padding: '8px 16px', borderRadius: 10, fontSize: 15, fontWeight: 900, letterSpacing: '0.12em', color: '#fff',
+                          background: `linear-gradient(135deg, ${v.c}, ${v.c}aa)`, boxShadow: `0 8px 24px -8px ${v.c}` }}>{v.label}</div>
+                        <div>
+                          <div className="eyebrow" style={{ fontSize: 9, color: v.c }}>Desk Verdict</div>
+                          <div style={{ fontSize: 12, color: 'var(--c-subtle)', fontWeight: 600, marginTop: 2 }}>{v.line}</div>
+                        </div>
+                      </div>
+                      <pre className="mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, lineHeight: 1.75, color: 'var(--c-subtle)', margin: 0, padding: 16, fontWeight: 500 }}>
+                        {result.verdict}
+                      </pre>
+                    </div>
+                  );
+                })()}
 
                 {/* Raw signal toggle */}
                 <button onClick={() => setShowRaw(v => !v)} style={{
@@ -2244,7 +2623,7 @@ export default function Home() {
                 </button>
 
                 {showRaw && (
-                  <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+                  <div className="glass" style={{ padding: 16 }}>
                     <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, lineHeight: 1.7, color: 'var(--c-dim)', margin: 0 }}>
                       {result.masterSignal.signalText}
                     </pre>
@@ -2260,7 +2639,7 @@ export default function Home() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
             {/* Header + scan button */}
-            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+            <div className="glass" style={{ padding: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                 <div>
                   <div style={{ fontWeight: 800, fontSize: 15, color: 'var(--c-text)' }}>🔭 Pre-Pump Radar</div>
@@ -3395,7 +3774,7 @@ export default function Home() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
             {/* ── SYNC KEY ───────────────────────────────────── */}
-            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+            <div className="glass" style={{ padding: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--c-muted)' }}>🔑 SYNC KEY</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -3472,7 +3851,7 @@ export default function Home() {
             })()}
 
             {/* ── 1. TRADING MODE ────────────────────────────── */}
-            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+            <div className="glass" style={{ padding: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 12 }}>1 · TRADING MODE</div>
               <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
                 {(['Paper', 'Live'] as const).map(mode => (
@@ -3495,7 +3874,7 @@ export default function Home() {
             </div>
 
             {/* ── 1b. TIMEZONE ───────────────────────────────── */}
-            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+            <div className="glass" style={{ padding: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 10 }}>1b · TIMEZONE</div>
               <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--c-dim)' }}>
                 Used for trade timestamps and session times. Current time: <span style={{ color: 'var(--c-text)' }}>
@@ -3560,7 +3939,7 @@ export default function Home() {
             </div>
 
             {/* ── 3. ACCOUNT & RISK LIMITS ───────────────────── */}
-            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+            <div className="glass" style={{ padding: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 12 }}>3 · ACCOUNT & RISK LIMITS</div>
 
               {/* Expected ROI per trade — top of section for visibility */}
@@ -3712,7 +4091,7 @@ export default function Home() {
             </div>
 
             {/* ── 4. EXECUTION DEFAULTS ──────────────────────── */}
-            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+            <div className="glass" style={{ padding: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 12 }}>4 · EXECUTION DEFAULTS</div>
 
               {/* Order type */}
@@ -3766,7 +4145,7 @@ export default function Home() {
             </div>
 
             {/* ── 5. AI ANALYSIS PROVIDER ────────────────────── */}
-            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+            <div className="glass" style={{ padding: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 12 }}>5 · AI ANALYSIS PROVIDER</div>
 
               {/* Provider selector */}
@@ -3850,7 +4229,7 @@ export default function Home() {
             </button>
 
             {/* ── 6. RISK MANAGEMENT STRATEGIES ─────────────── */}
-            <div style={{ padding: 16, background: 'var(--c-card)', border: '1px solid var(--c-border)', borderRadius: 10 }}>
+            <div className="glass" style={{ padding: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 14 }}>6 · RISK MANAGEMENT STRATEGIES</div>
 
               {/* Strategy: Position Sizing */}
