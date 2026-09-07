@@ -80,7 +80,8 @@ export function bollingerBands(closes: number[], period = 20, stdMult = 2): { up
 
 export function vwap(candles: RawCandle[]): number {
   let cumPV = 0, cumV = 0;
-  for (const c of candles) {
+  const session = Math.floor((candles.at(-1)?.time ?? 0) / 86400000);
+  for (const c of candles.filter(c => Math.floor(c.time / 86400000) === session)) {
     const tp = (c.high + c.low + c.close) / 3;
     cumPV += tp * c.volume;
     cumV += c.volume;
@@ -95,12 +96,13 @@ export function poc(candles: RawCandle[], buckets = 50): number {
   const minP = Math.min(...lows);
   const maxP = Math.max(...highs);
   const step = (maxP - minP) / buckets;
+  if (step === 0) return minP;
   const vol: number[] = new Array(buckets).fill(0);
   for (const c of candles) {
     const lo = Math.floor((c.low - minP) / step);
     const hi = Math.ceil((c.high - minP) / step);
     for (let b = Math.max(0, lo); b < Math.min(buckets, hi); b++) {
-      vol[b] += c.volume;
+      vol[b] += c.volume / Math.max(1, Math.min(buckets, hi) - Math.max(0, lo));
     }
   }
   const maxBucket = vol.indexOf(Math.max(...vol));
@@ -180,14 +182,21 @@ export function wyckoffPhase(candles: RawCandle[]): string {
   return 'TRANSITION / UNCLEAR (simplified)';
 }
 
+export function confirmedSwings(candles: RawCandle[], radius = 2) {
+  const highs: number[] = [], lows: number[] = [];
+  // Exclude the breakout candle from pivot confirmation.
+  for (let i=radius; i<candles.length-1-radius; i++) {
+    const nearby=candles.slice(i-radius,i+radius+1);
+    if (nearby.every((c,j)=>j===radius||c.high<candles[i].high)) highs.push(candles[i].high);
+    if (nearby.every((c,j)=>j===radius||c.low>candles[i].low)) lows.push(candles[i].low);
+  }
+  return { highs, lows };
+}
 export function detectBOS(candles: RawCandle[]): boolean {
-  if (candles.length < 10) return false;
-  const recent = candles.slice(-10);
-  const prev = candles.slice(-20, -10);
-  const prevHigh = Math.max(...prev.map((c) => c.high));
-  const prevLow  = Math.min(...prev.map((c) => c.low));
-  const recentClose = recent[recent.length - 1].close;
-  return recentClose > prevHigh || recentClose < prevLow;
+  const {highs,lows}=confirmedSwings(candles),last=candles.at(-1),prev=candles.at(-2);
+  if (!last||!prev) return false;
+  return (highs.length>0&&prev.close<=highs.at(-1)!&&last.close>highs.at(-1)!) ||
+    (lows.length>0&&prev.close>=lows.at(-1)!&&last.close<lows.at(-1)!);
 }
 
 /**
@@ -248,23 +257,25 @@ export function detectOB(candles: RawCandle[], direction: 'LONG' | 'SHORT'): boo
   return false;
 }
 
-export function detectFVG(candles: RawCandle[]): boolean {
-  for (let i = 2; i < candles.length; i++) {
-    const gap  = candles[i].low - candles[i - 2].high;
-    const gap2 = candles[i - 2].low - candles[i].high;
-    if (gap > 0 || gap2 > 0) return true;
+export function detectFVG(candles: RawCandle[], direction?: 'LONG'|'SHORT'): boolean {
+  const a=atr(candles),price=candles.at(-1)?.close??0;
+  if(a<=0) return false;
+  for(let i=Math.max(2,candles.length-20);i<candles.length;i++) {
+    const bull=candles[i].low>candles[i-2].high;
+    const low=bull?candles[i-2].high:candles[i].high, high=bull?candles[i].low:candles[i-2].low;
+    if(direction && (direction==='LONG')!==bull) continue;
+    if(high-low<a*0.2 || Math.min(Math.abs(price-low),Math.abs(price-high))>a*2) continue;
+    if(candles.slice(i+1).some(c=>bull?c.low<=high:c.high>=low)) continue;
+    return true;
   }
   return false;
 }
-
 export function detectChoCH(candles: RawCandle[]): boolean {
-  if (candles.length < 20) return false;
-  const half = Math.floor(candles.length / 2);
-  const first = candles.slice(0, half);
-  const second = candles.slice(half);
-  const trend1 = first[first.length - 1].close > first[0].close ? 'UP' : 'DOWN';
-  const trend2 = second[second.length - 1].close > second[0].close ? 'UP' : 'DOWN';
-  return trend1 !== trend2;
+  const {highs,lows}=confirmedSwings(candles),last=candles.at(-1),prev=candles.at(-2);
+  if(highs.length<2||lows.length<2||!last||!prev) return false;
+  const up=highs.at(-1)!>highs.at(-2)!&&lows.at(-1)!>lows.at(-2)!;
+  const down=highs.at(-1)!<highs.at(-2)!&&lows.at(-1)!<lows.at(-2)!;
+  return (up&&prev.close>=lows.at(-1)!&&last.close<lows.at(-1)!) || (down&&prev.close<=highs.at(-1)!&&last.close>highs.at(-1)!);
 }
 
 export function detectLiquiditySweep(candles: RawCandle[]): boolean {

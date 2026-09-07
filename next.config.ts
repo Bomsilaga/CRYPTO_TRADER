@@ -1,9 +1,6 @@
-import type { NextConfig } from 'next';
-
+import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ['web-push'],
-  },
+  serverExternalPackages: ["web-push"],
+  outputFileTracingRoot: process.cwd(),
 };
-
 export default nextConfig;

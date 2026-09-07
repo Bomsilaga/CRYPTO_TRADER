@@ -15,7 +15,7 @@
  * signals and execution use the same price source.
  */
 
-const BYBIT_PUBLIC = 'https://api.bybit.com';
+const BYBIT_PUBLIC = process.env.BYBIT_TESTNET === 'true' ? 'https://api-testnet.bybit.com' : 'https://api.bybit.com';
 
 export interface RawCandle {
   time: number;
@@ -50,9 +50,9 @@ const IV: Record<string, string> = {
   '1m': '1', '5m': '5', '15m': '15', '1h': '60', '4h': '240', '1d': 'D',
 };
 
-export async function fetchKlines(symbol: string, interval: string, limit = 200): Promise<RawCandle[]> {
+export async function fetchKlines(symbol: string, interval: string, limit = 200, end?: number): Promise<RawCandle[]> {
   const iv = IV[interval] ?? '60';
-  const url = `${BYBIT_PUBLIC}/v5/market/kline?category=linear&symbol=${symbol}&interval=${iv}&limit=${limit}`;
+  const url = `${BYBIT_PUBLIC}/v5/market/kline?category=linear&symbol=${symbol}&interval=${iv}&limit=${limit}${end === undefined ? '' : '&end=' + end}`;
   const json = await bybitFetch(url) as { retCode: number; result: { list: string[][] } };
   if (json.retCode !== 0) throw new Error(`Bybit kline error for ${symbol}`);
   // Bybit returns newest first — reverse to chronological
@@ -65,7 +65,7 @@ export async function fetchKlines(symbol: string, interval: string, limit = 200)
       low:    parseFloat(l),
       close:  parseFloat(c),
       volume: parseFloat(v),
-    }));
+    })).filter(c => c.time + (iv === 'D' ? 86400000 : iv === 'W' ? 604800000 : Number(iv) * 60000) <= Date.now());
 }
 
 export async function fetchTicker(symbol: string): Promise<{ price: number; change24h: number; volume24h: number }> {
@@ -105,7 +105,32 @@ export async function fetchAllTickers(): Promise<{ symbol: string; price: number
 export async function fetchFundingRate(symbol: string): Promise<number> {
   const url = `${BYBIT_PUBLIC}/v5/market/tickers?category=linear&symbol=${symbol}`;
   const json = await bybitFetch(url) as { retCode: number; result: { list: Record<string, string>[] } };
-  if (json.retCode !== 0) return 0;
+  if (json.retCode !== 0) throw new Error('Funding data unavailable');
   const d = json.result?.list?.[0];
-  return d ? parseFloat(d.fundingRate) : 0;
+  const rate = Number(d?.fundingRate); if (!Number.isFinite(rate)) throw new Error('Funding data unavailable'); return rate;
+}
+
+export async function fetchInstrument(symbol: string): Promise<import('./risk').Rules> {
+  const json = await bybitFetch(`${BYBIT_PUBLIC}/v5/market/instruments-info?category=linear&symbol=${symbol}`) as { retCode: number; result: { list: { status: string; settleCoin: string; priceFilter: { tickSize: string }; lotSizeFilter: { qtyStep: string; minOrderQty: string; minNotionalValue: string; maxMktOrderQty: string; maxOrderQty: string }; leverageFilter: { maxLeverage: string } }[] } };
+  const d = json.result?.list?.[0];
+  if (json.retCode !== 0 || !d || d.status !== 'Trading' || d.settleCoin !== 'USDT') throw new Error('Instrument unavailable');
+  const rules = { tickSize: Number(d.priceFilter.tickSize), qtyStep: Number(d.lotSizeFilter.qtyStep),
+    minQty: Number(d.lotSizeFilter.minOrderQty), minNotional: Number(d.lotSizeFilter.minNotionalValue),
+    maxQty: Math.min(Number(d.lotSizeFilter.maxMktOrderQty), Number(d.lotSizeFilter.maxOrderQty)), maxLeverage: Number(d.leverageFilter.maxLeverage) };
+  if (Object.values(rules).some(n => !Number.isFinite(n) || n <= 0)) throw new Error('Invalid exchange instrument rules');
+  return rules;
+}
+export async function fetchHistory(symbol: string, interval: string, pages = 5): Promise<RawCandle[]> {
+  let end: number | undefined;
+  const rows = new Map<number, RawCandle>();
+  for (let i=0; i<pages; i++) {
+    const page = await fetchKlines(symbol, interval, 1000, end);
+    if (!page.length) break;
+    for (const c of page) rows.set(c.time, c);
+    const next = page[0].time - 1;
+    if (end !== undefined && next >= end) break;
+    end = next;
+    if (page.length < 999) break;
+  }
+  return [...rows.values()].sort((a,b) => a.time-b.time);
 }
