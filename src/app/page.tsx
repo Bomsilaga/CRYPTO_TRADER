@@ -717,6 +717,8 @@ function HistoricalEdgePanel({ ev, realized, riskAmount }: { ev?: HistoricalEvid
             <span className="chip" style={{ background: 'rgba(148,163,184,0.10)', color: 'var(--c-muted)', borderColor: 'var(--c-border)' }} title={ev!.btcSplit?.note}>
               BTC {ev!.btcSplit?.alignedNow} · {ev!.btcSplit?.evidenceSupportsSizingRule ? `rule supported (${ev!.btcSplit.differenceR >= 0 ? '+' : ''}${ev!.btcSplit.differenceR.toFixed(2)}R gap)` : 'no sizing rule (not supported by history)'}
             </span>
+            {ev!.btcRelation && <span className="chip" title={ev!.btcRelation.note} style={{ background: 'rgba(148,163,184,0.10)', color: ev!.btcRelation.coupling === 'LOOSE' ? '#4ade80' : ev!.btcRelation.coupling === 'TIGHT' ? '#f87171' : '#fbbf24', borderColor: 'var(--c-border)' }}>{ev!.btcRelation.coupling} BTC COUPLING · corr {ev!.btcRelation.corr4h90d.toFixed(2)} · against BTC {(ev!.btcRelation.oppositeDayShare90d * 100).toFixed(0)}% of days</span>}
+            {ev!.source && ev!.source !== 'bybit' && <span className="chip" style={{ background: 'rgba(234,179,8,0.12)', color: '#fbbf24', borderColor: 'rgba(234,179,8,0.35)' }}>source {ev!.source.toUpperCase()} · venue ≠ execution</span>}
             {sim && sim.n >= 20 && <span className="chip" style={{ background: 'rgba(99,102,241,0.14)', color: '#c7d2fe', borderColor: 'rgba(129,140,248,0.4)' }}>at ${riskAmount.toFixed(0)} risk · match exp {modelDollar(sim.expectancyR)}/trade</span>}
           </div>
           {noTrade.length > 0 && (
@@ -770,6 +772,12 @@ export default function Home() {
   const [execToken, setExecToken] = useState('');
   const [historyBuilding, setHistoryBuilding] = useState<string | null>(null);
   const [historyMsg, setHistoryMsg] = useState<string | null>(null);
+  const [historyRuns, setHistoryRuns] = useState<{ symbol: string; builtAt: string; trades: number; source?: string; btcRelation?: { coupling: string; corr4h90d: number; oppositeDayShare90d: number; beta4h: number } }[]>([]);
+  useEffect(() => {
+    if (tab !== 'settings' && tab !== 'scan') return;
+    fetch('/api/history/status').then(r => r.json()).then((j: { ok?: boolean; runs?: typeof historyRuns }) => { if (j.ok && j.runs) setHistoryRuns(j.runs); }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, historyMsg]);
   const [manageState, setManageState] = useState<{ tradeId: string; state: string; note: string } | null>(null);
   const [showSecret, setShowSecret] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
@@ -2098,14 +2106,42 @@ export default function Home() {
                           </div>
                         )}
                         {(() => {
-                          const v = getBtcVerdict(result, btcResult, divs);
-                          return (
-                            <div style={{ padding: '9px 12px', background: v.bg, border: `1px solid ${v.border}`, borderRadius: 6 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                                <span style={{ fontSize: 10, color: 'var(--c-dim)', fontWeight: 600, letterSpacing: 1 }}>BTC VERDICT</span>
-                                <span style={{ fontSize: 12, fontWeight: 800, color: v.color }}>{v.label}</span>
+                          const ev = result.historicalEvidence;
+                          const rel = ev?.btcRelation;
+                          const split = ev?.btcSplit;
+                          // Evidence-aware: BTC context only becomes a sizing rule when THIS pair's own history supports it.
+                          if (ev?.available && split) {
+                            const opposed = split.alignedNow === 'OPPOSED';
+                            const v = split.evidenceSupportsSizingRule && opposed
+                              ? { label: 'REDUCE SIZE · history-backed', color: '#f97316', bg: '#f9731611', border: '#f9731633', reason: split.note }
+                              : split.evidenceSupportsSizingRule
+                                ? { label: 'BTC ALIGNED · history-backed', color: '#22c55e', bg: '#22c55e11', border: '#22c55e33', reason: split.note }
+                                : { label: 'INFORMATIONAL · not a gate', color: '#a5b4fc', bg: '#6366f111', border: '#6366f133', reason: split.note };
+                            return (
+                              <div style={{ padding: '9px 12px', background: v.bg, border: `1px solid ${v.border}`, borderRadius: 6 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: 10, color: 'var(--c-dim)', fontWeight: 600, letterSpacing: 1 }}>BTC CONTEXT</span>
+                                  <span style={{ fontSize: 12, fontWeight: 800, color: v.color }}>{v.label}</span>
+                                  {rel && <span className="chip" style={{ background: 'rgba(148,163,184,0.10)', color: rel.coupling === 'LOOSE' ? '#4ade80' : rel.coupling === 'TIGHT' ? '#f87171' : '#fbbf24', borderColor: 'var(--c-border)' }}>{rel.coupling} COUPLING · corr {rel.corr4h90d.toFixed(2)} · vs BTC {(rel.oppositeDayShare90d * 100).toFixed(0)}% of days</span>}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--c-muted)', lineHeight: 1.5 }}>{v.reason}{rel ? ` ${rel.note}` : ''}</div>
                               </div>
-                              <div style={{ fontSize: 11, color: 'var(--c-muted)', lineHeight: 1.5 }}>{v.reason}</div>
+                            );
+                          }
+                          // No pair history: BTC is context only. A pair is never written off for trading against BTC —
+                          // many alts decouple for days at a time; whether that matters is measured per pair, not assumed.
+                          const v = getBtcVerdict(result, btcResult, divs);
+                          const conflict = btcDir !== 'NEUTRAL' && btcDir !== result.direction;
+                          const ctx = conflict
+                            ? { label: 'CONTEXT ONLY · trading against BTC', color: '#a5b4fc', bg: '#6366f111', border: '#6366f133', reason: `${divs.length} BTC divergence${divs.length === 1 ? '' : 's'} noted. This is not a reason to skip the pair — some pairs trend against BTC for extended periods. Build this pair's history to measure how much BTC actually matters here; until then, let the pair's own structure decide.` }
+                            : { label: v.label.includes('PROCEED') ? 'BTC ALIGNED' : v.label, color: v.color, bg: v.bg, border: v.border, reason: v.reason };
+                          return (
+                            <div style={{ padding: '9px 12px', background: ctx.bg, border: `1px solid ${ctx.border}`, borderRadius: 6 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                <span style={{ fontSize: 10, color: 'var(--c-dim)', fontWeight: 600, letterSpacing: 1 }}>BTC CONTEXT</span>
+                                <span style={{ fontSize: 12, fontWeight: 800, color: ctx.color }}>{ctx.label}</span>
+                              </div>
+                              <div style={{ fontSize: 11, color: 'var(--c-muted)', lineHeight: 1.5 }}>{ctx.reason}</div>
                             </div>
                           );
                         })()}
@@ -4085,6 +4121,28 @@ export default function Home() {
                 </button>
               </div>
               {historyMsg && <div className="mono" style={{ marginTop: 8, fontSize: 10, color: 'var(--c-muted)', wordBreak: 'break-word' }}>{historyMsg}</div>}
+
+              {/* Pairs with history + measured BTC coupling (pairs that can trend against BTC) */}
+              {historyRuns.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div className="eyebrow" style={{ fontSize: 9, marginBottom: 6 }}>Pairs with history · BTC coupling (measured, 90d)</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {[...historyRuns].sort((a, b) => (a.btcRelation?.corr4h90d ?? 1) - (b.btcRelation?.corr4h90d ?? 1)).map(r => {
+                      const rel = r.btcRelation;
+                      const c = !rel || rel.coupling === 'UNKNOWN' ? 'var(--c-faint)' : rel.coupling === 'LOOSE' ? '#4ade80' : rel.coupling === 'TIGHT' ? '#f87171' : '#fbbf24';
+                      return (
+                        <button key={r.symbol} onClick={() => { setSymbol(r.symbol); scan(r.symbol); }} className="row-hover" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, background: 'var(--c-inner)', border: '1px solid var(--c-border)', cursor: 'pointer', textAlign: 'left', width: '100%' }}>
+                          <span style={{ fontWeight: 800, fontSize: 12, color: 'var(--c-text)', minWidth: 70 }}>{r.symbol.replace('USDT', '')}</span>
+                          <span className="chip" style={{ background: `${c}18`, color: c, borderColor: `${c}44` }}>{rel?.coupling ?? 'UNKNOWN'}</span>
+                          {rel && rel.coupling !== 'UNKNOWN' && <span className="mono" style={{ fontSize: 10, color: 'var(--c-dim)' }}>corr {rel.corr4h90d.toFixed(2)} · against BTC {(rel.oppositeDayShare90d * 100).toFixed(0)}% of days · β {rel.beta4h.toFixed(2)}</span>}
+                          <span style={{ marginLeft: 'auto', fontSize: 9, color: 'var(--c-faintest)' }}>{r.source ?? 'bybit'} · {r.builtAt.slice(0, 10)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontSize: 9, color: 'var(--c-faintest)', marginTop: 6 }}>LOOSE = 90-day 4h correlation under 0.40 — these pairs regularly trend against BTC and are judged on their own structure. A pair is never written off for trading against BTC.</div>
+                </div>
+              )}
             </div>
 
             {/* ── 3. ACCOUNT & RISK LIMITS ───────────────────── */}

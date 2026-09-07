@@ -15,7 +15,8 @@ export async function GET(req: NextRequest) {
       ok: true, symbol, builtAt: run.builtAt, config: run.config, coverage: run.coverage, decisions: run.decisions, neutralDecisions: run.neutralDecisions,
       LONG: buildEvidence({ run: { ...run, trades: [] }, symbol, direction: 'LONG' }),
       SHORT: buildEvidence({ run: { ...run, trades: [] }, symbol, direction: 'SHORT' }),
-      stats: { all: run.stats.all, LONG: run.stats.LONG, SHORT: run.stats.SHORT, walkForward: run.stats.walkForward, decay: run.stats.decay, btcSplit: run.stats.btcSplit },
+      source: run.source ?? 'bybit',
+      stats: { all: run.stats.all, LONG: run.stats.LONG, SHORT: run.stats.SHORT, walkForward: run.stats.walkForward, decay: run.stats.decay, btcSplit: run.stats.btcSplit, btcRelation: run.stats.btcRelation ?? null },
     });
   } catch (err) {
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });

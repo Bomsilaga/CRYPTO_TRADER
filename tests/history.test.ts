@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { fetchKlinesRange, fetchFundingRange } from '../src/lib/history/bybitHistory';
 import { FileHistoryStore } from '../src/lib/history/store';
 import { syncCandles } from '../src/lib/history/sync';
+import { bybitSource } from '../src/lib/history/sources';
 import { resample, closedBefore, mergeCandles } from '../src/lib/history/resample';
 import { synthCandles } from './fixtures';
 import { promises as fs } from 'fs';
@@ -50,11 +51,11 @@ describe('historical pagination + storage', () => {
     const all = synthCandles({ n: 1200, tf: '1h', seed: 3 });
     const now = all[999].time + H + 1;                            // candle 1000 still open → first 1000 closed
     const { fetchImpl, calls } = fakeBybit(all);
-    const r1 = await syncCandles(store, 'X', '1h', { depthMs: 5000 * H, now, fetchImpl });
+    const r1 = await syncCandles(store, 'X', '1h', { depthMs: 5000 * H, now, source: bybitSource(fetchImpl) });
     expect(r1.fetched).toBe(1000);
     expect((await store.getCandles('X', '1h')).length).toBe(1000);
     const c1 = calls.length;
-    const r2 = await syncCandles(store, 'X', '1h', { now: now + 100 * H, fetchImpl });
+    const r2 = await syncCandles(store, 'X', '1h', { now: now + 100 * H, source: bybitSource(fetchImpl) });
     expect(r2.fetched).toBe(100);
     expect(calls.length - c1).toBe(1);
     const stored = await store.getCandles('X', '1h');
@@ -62,7 +63,7 @@ describe('historical pagination + storage', () => {
     expect(new Set(stored.map(c => c.time)).size).toBe(1100);
     const again = await store.upsertCandles('X', '1h', stored.slice(0, 50));
     expect(again.inserted).toBe(0);
-    const r3 = await syncCandles(store, 'X', '1h', { now: now + 100 * H, fetchImpl });
+    const r3 = await syncCandles(store, 'X', '1h', { now: now + 100 * H, source: bybitSource(fetchImpl) });
     expect(r3.skipped).toBe('up to date');
   });
   it('resample aligns to UTC boundaries and closedBefore excludes the open candle', () => {

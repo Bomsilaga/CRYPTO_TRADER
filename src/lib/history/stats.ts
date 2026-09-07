@@ -1,7 +1,7 @@
 /**
  * history/stats.ts — statistics over replayed trades. R-multiples are primary.
  */
-import type { BacktestTrade, DecayResult, RateStat, SampleQuality, StatBlock, WalkForwardFold, WalkForwardResult, WilsonInterval, BtcSplitResult } from './types';
+import type { BacktestTrade, DecayResult, RateStat, SampleQuality, StatBlock, WalkForwardFold, WalkForwardResult, WilsonInterval, BtcSplitResult, BtcRelation, StoredCandle } from './types';
 
 export function wilson(hits: number, n: number, z = 1.96): WilsonInterval {
   if (n <= 0) return { low: 0, high: 0 };
@@ -173,3 +173,49 @@ export function btcSplit(trades: BacktestTrade[], direction: 'LONG' | 'SHORT'): 
 
 export const fmtR = (r: number) => `${r >= 0 ? '+' : ''}${r.toFixed(2)}R`;
 export const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
+function alignedReturns(a: StoredCandle[], b: StoredCandle[]): { ra: number[]; rb: number[]; times: number[] } {
+  const mb = new Map(b.map(c => [c.time, c] as const));
+  const ra: number[] = [], rb: number[] = [], times: number[] = [];
+  for (let i = 1; i < a.length; i++) {
+    const prevB = mb.get(a[i - 1].time), curB = mb.get(a[i].time);
+    if (!prevB || !curB || a[i - 1].close <= 0 || prevB.close <= 0) continue;
+    ra.push(Math.log(a[i].close / a[i - 1].close));
+    rb.push(Math.log(curB.close / prevB.close));
+    times.push(a[i].time);
+  }
+  return { ra, rb, times };
+}
+function pearson(x: number[], y: number[]): number {
+  const n = Math.min(x.length, y.length);
+  if (n < 10) return 0;
+  const mx = x.reduce((a, b) => a + b, 0) / n, my = y.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { const dx = x[i] - mx, dy = y[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+  return sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : 0;
+}
+
+/** Measured BTC coupling for a pair from 4h and 1d candles (pair vs BTCUSDT). */
+export function btcRelation(pair4h: StoredCandle[], btc4h: StoredCandle[], pair1d: StoredCandle[], btc1d: StoredCandle[], now = Date.now()): BtcRelation {
+  const h = alignedReturns(pair4h, btc4h);
+  const d = alignedReturns(pair1d, btc1d);
+  if (h.ra.length < 60 || d.ra.length < 20) return { corr4hAll: 0, corr4h90d: 0, beta4h: 0, oppositeDayShare: 0, oppositeDayShare90d: 0, days: d.ra.length, coupling: 'UNKNOWN', note: 'Not enough overlapping history with BTC to measure coupling.' };
+  const corrAll = pearson(h.ra, h.rb);
+  const cut = now - 90 * 86_400_000;
+  const idx90 = h.times.findIndex(t => t >= cut);
+  const corr90 = idx90 >= 0 ? pearson(h.ra.slice(idx90), h.rb.slice(idx90)) : corrAll;
+  const mb = h.rb.reduce((a, b) => a + b, 0) / h.rb.length, ma = h.ra.reduce((a, b) => a + b, 0) / h.ra.length;
+  let cov = 0, vb = 0;
+  for (let i = 0; i < h.ra.length; i++) { cov += (h.ra[i] - ma) * (h.rb[i] - mb); vb += (h.rb[i] - mb) ** 2; }
+  const beta = vb > 0 ? cov / vb : 0;
+  const opp = d.ra.filter((r, i) => Math.sign(r) !== Math.sign(d.rb[i]) && r !== 0 && d.rb[i] !== 0).length / d.ra.length;
+  const d90 = d.times.findIndex(t => t >= cut);
+  const opp90 = d90 >= 0 && d.ra.length - d90 >= 15 ? d.ra.slice(d90).filter((r, i) => Math.sign(r) !== Math.sign(d.rb[d90 + i]) && r !== 0 && d.rb[d90 + i] !== 0).length / (d.ra.length - d90) : opp;
+  const coupling: BtcRelation['coupling'] = corr90 >= 0.7 ? 'TIGHT' : corr90 >= 0.4 ? 'MODERATE' : 'LOOSE';
+  const note = coupling === 'LOOSE'
+    ? `Loosely coupled to BTC: 90-day 4h correlation ${corr90.toFixed(2)} and it closed against BTC on ${(opp90 * 100).toFixed(0)}% of recent days. BTC direction is context here, not a gate.`
+    : coupling === 'TIGHT'
+      ? `Tightly coupled to BTC: 90-day 4h correlation ${corr90.toFixed(2)}, beta ${beta.toFixed(2)}; it moved against BTC on only ${(opp90 * 100).toFixed(0)}% of recent days. BTC direction matters for this pair.`
+      : `Moderately coupled to BTC: 90-day 4h correlation ${corr90.toFixed(2)}, against BTC on ${(opp90 * 100).toFixed(0)}% of recent days. Weigh BTC context with the pair's own structure.`;
+  return { corr4hAll: corrAll, corr4h90d: corr90, beta4h: beta, oppositeDayShare: opp, oppositeDayShare90d: opp90, days: d.ra.length, coupling, note };
+}

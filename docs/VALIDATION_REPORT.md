@@ -2,9 +2,10 @@
 
 Branch: `claude/historical-edge-engine` · Date: 2026-09-07
 
-This report describes what was built, what was verified, and — importantly — what was **not** verified. No historical
-statistic in this document is a market result. The exchange was not reachable from the build environment
-(see §6), so the only replay executed end-to-end ran on deterministic **synthetic** candles to validate the pipeline.
+This report describes what was built, what was verified, and what was **not**. Update 2 (same day): Bybit is
+geo-blocked from the build environment, so an **OKX fallback source** was added and real history for six pairs was
+downloaded, replayed and uploaded to Supabase (§6, §13). Those statistics are real market results **from OKX
+perpetuals, not Bybit** — a documented venue mismatch (§14).
 
 ---
 
@@ -13,7 +14,7 @@ statistic in this document is a market result. The exchange was not reachable fr
 | Area | Files |
 |---|---|
 | Security + execution | `src/lib/auth.ts` (new), `src/lib/kv.ts` (new), `src/lib/risk/limits.ts` (new), `src/lib/risk/riskModel.ts` (new), `src/lib/bybitPrivate.ts` (new), `src/lib/execution.ts` (new), `src/app/api/trade/route.ts` (rewritten), `src/app/api/trade/manage/route.ts` (new), `src/app/api/cron/scan/route.ts` (auth added) |
-| Historical engine | `src/lib/history/{types,bybitHistory,resample,store,sync,features,costs,outcome,backtest,stats,similarity,evidence,pipeline}.ts` (new), `supabase/migrations/20260907_crypto_trader_history_engine.sql` (new, applied), `scripts/history-build.ts` (new) |
+| Historical engine | `src/lib/history/{types,bybitHistory,okxHistory,sources,resample,store,sync,features,costs,outcome,backtest,stats,similarity,evidence,pipeline}.ts` (new), `supabase/migrations/20260907_crypto_trader_history_engine.sql` + `20260907_crypto_trader_hist_write_token.sql` (new, applied), `scripts/history-build.ts`, `scripts/history-upload.ts` (new) |
 | API surface | `src/app/api/scan/route.ts` (features + evidence), `src/app/api/evidence/route.ts` (new), `src/app/api/history/build/route.ts` (new), `src/app/api/history/status/route.ts` (new), `src/app/api/ai-explain/route.ts` (rewritten) |
 | UI | `src/app/page.tsx` — Historical Edge panel now renders exchange-replay statistics (4 layers), execution-token setting, history builder, idempotent execution, limit-entry state polling, hard-limit/fill/liquidation display |
 | Tooling | `vitest.config.ts`, `eslint.config.mjs`, `tests/*.test.ts` (10 files, 53 tests), `package.json` scripts (`test`, `typecheck`, `lint`, `history:build`, `check`), `.env.local.example` |
@@ -69,7 +70,7 @@ scan route ──▶ features(now) ──▶ history/evidence.buildEvidence ─�
 
 ## 5. Historical data source
 
-Bybit V5 public REST (`/v5/market/kline`, `/v5/market/funding/history`, category `linear`) — the same venue the app
+**Primary**: Bybit V5 public REST (`/v5/market/kline`, `/v5/market/funding/history`, category `linear`) — the same venue the app
 executes on. Paging is backward with `end`, 1000 candles per call, 120 ms inter-request gap, exponential backoff on
 429/5xx, de-duplicated by open time. `BYBIT_PROXY_URL` is honoured for blocked regions. Sync is incremental
 (`hist_sync_state.last_time`); a re-run fetches only closed candles newer than the last stored one.
@@ -77,21 +78,32 @@ executes on. Paging is backward with `end`, 1000 candles per call, 120 ms inter-
 Depth targets (first backfill): 1m 3 weeks · 5m ~9 months · 15m ~13 months · 1h 3 years · 4h 5 years · 1d 10 years
 (the exchange returns whatever exists; listing date bounds younger pairs such as EIGENUSDT).
 
+**Fallback** (`HISTORY_SOURCE=auto`, used when Bybit is unreachable): OKX v5 public `history-candles` /
+`funding-rate-history` for the same USDT perpetual (`EIGEN-USDT-SWAP`), 100 candles per call, 20 req/2 s, `1Dutc`
+bars so daily candles align with Bybit's UTC days; multiplier pairs (1000PEPE) are rescaled. Every run and sync state
+records `source`; the UI shows a "source OKX · venue ≠ execution" chip and the AI prompt is told.
+
+**Writes without the service-role key**: `hist_upsert` / `hist_delete_backtest_trades` are SECURITY DEFINER RPCs that
+check a sha256-hashed `HISTORY_WRITE_TOKEN` stored in `hist_config` (no anon policy). Verified: wrong token → error,
+anon direct insert → RLS error, correct token → upsert with table defaults applied.
+
 ## 6. Number of candles available per pair/timeframe
 
-**Not measured.** `api.bybit.com` answers every request from this build environment with
-`The Amazon CloudFront distribution is configured to block access from your country`. No candle was downloaded and no
-market replay was run. The storage tables were created (migration applied to Supabase project `mrhekpgvfcwfnzmipjis`)
-but contain **zero rows**. To populate them run, from a region Bybit serves (the app's Vercel region `sin1` works, or
-any machine with `BYBIT_PROXY_URL`):
+Downloaded from **OKX** on 2026-09-07 (Bybit blocked from this environment), stored locally and uploaded to Supabase
+(`hist_candles`, `hist_funding`, `hist_sync_state`, `hist_backtest_runs`, `hist_backtest_trades`).
 
-```
-SUPABASE_SERVICE_ROLE_KEY=… npm run history:build -- EIGENUSDT ETHUSDT SOLUSDT BTCUSDT SUIUSDT
-# or: Setup → Historical Edge Engine → "Build history for <pair>" (needs the execution token)
-```
+| Pair | 1m | 5m | 15m | 1h | 4h | 1d | Funding pts |
+|---|---|---|---|---|---|---|---|
+| BTCUSDT | 30,241 (3 wk) | 77,761 (Dec-25→) | 38,401 (Aug-25→) | 26,281 (Sep-23→) | 10,951 (Sep-21→) | 2,441 (Jan-20→) | 288 |
+| EIGENUSDT | 30,241 | 77,761 | 38,401 | 16,945 (Oct-24→, listing) | 4,236 | 706 | 576 |
+| ETHUSDT | 30,241 | 77,761 | 38,401 | 26,281 | 10,951 | 2,441 | 288 |
+| SOLUSDT | 30,241 | 77,761 | 38,401 | 26,281 | 10,951 | 2,053 (Jan-21→) | 289 |
+| SUIUSDT | 30,241 | 77,761 | 38,401 | 26,281 | 7,328 (May-23→) | 1,221 | 289 |
+| ICPUSDT | 30,241 | 77,761 | 38,401 | 26,281 | 10,951 | 1,941 (May-21→) | 289 |
 
-The script prints fetched/stored counts per timeframe and the per-direction statistics after replay. The pagination
-arithmetic was verified with a fake server: 2,500 candles → 3 requests, no duplicates, ascending order.
+Each pair took ~7–8 minutes to download and replay (≈26,000 hourly decisions for the 3-year pairs). Re-running is
+incremental. Other pairs: `HISTORY_WRITE_TOKEN=… npm run history:build -- <PAIR>` (auto-selects source) then
+`npm run history:upload -- <PAIR> --candles`, or Setup → "Build history" once `HISTORY_WRITE_TOKEN` is set in Vercel.
 
 ## 7. Backtest assumptions
 
@@ -139,14 +151,56 @@ and validation blocks. Warnings are raised for < 3 folds, OOS n < 50, degradatio
 
 ## 13. Out-of-sample results
 
-**None from market data** (§6). The synthetic-market run used by the test-suite (`tests/backtest.test.ts`) exercises
-the full pipeline — decisions, neutral handling, one-at-a-time, cost subtraction, MFE/MAE, walk-forward and evidence
-assembly — but its numbers are meaningless for trading and are deliberately not reported here. The correct sentence to
-use once real data exists, if and only if the data supports it, is: *"historically positive out-of-sample expectancy
-under tested assumptions"*.
+Real replay, OKX data, **conservative** profile (taker entry/stop, maker targets, 5 bps slippage, historical funding),
+stop-to-breakeven after TP1, one trade at a time, headline population = engine score ≥ 60. OOS = pooled validation
+months of the rolling 6m/1m walk-forward. Sample quality per §Phase 14 scale.
+
+| Pair | Dir | n (≥60) | Quality | TP1 | TP2 | TP3 | Stop-first | Exp (all) | PF | OOS n | **OOS exp** | OOS PF | Recent edge |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| EIGENUSDT | LONG | 33 | VERY LOW | 48.5% | 24.2% | 18.2% | 51.5% | −0.05R | 0.91 | 20 | **−0.14R** | 0.77 | INSUFFICIENT |
+| EIGENUSDT | SHORT | 33 | VERY LOW | 57.6% | 39.4% | 15.2% | 39.4% | +0.22R | 1.53 | 38 | **+0.24R** | 1.67 | INSUFFICIENT |
+| ETHUSDT | LONG | 105 | MODERATE | 61.0% | 32.4% | 21.0% | 38.1% | +0.10R | 1.23 | 131 | **+0.08R** | 1.18 | EDGE NEGATIVE |
+| ETHUSDT | SHORT | 92 | LOW | 51.1% | 28.3% | 20.7% | 45.7% | −0.02R | 0.96 | 106 | **−0.02R** | 0.97 | EDGE NEGATIVE |
+| SOLUSDT | LONG | 81 | LOW | 58.0% | 29.6% | 17.3% | 42.0% | +0.07R | 1.15 | 95 | **−0.05R** | 0.91 | STABLE |
+| SOLUSDT | SHORT | 66 | LOW | 47.0% | 22.7% | 13.6% | 50.0% | −0.13R | 0.77 | 82 | **−0.14R** | 0.76 | EDGE NEGATIVE |
+| SUIUSDT | LONG | 58 | LOW | 58.6% | 34.5% | 22.4% | 41.4% | +0.18R | 1.41 | 79 | **+0.18R** | 1.43 | STABLE |
+| SUIUSDT | SHORT | 61 | LOW | 57.4% | 26.2% | 13.1% | 42.6% | +0.05R | 1.10 | 66 | **+0.08R** | 1.17 | EDGE WEAKENING |
+| ICPUSDT | LONG | 60 | LOW | 50.0% | 31.7% | 18.3% | 46.7% | +0.02R | 1.04 | 84 | **+0.04R** | 1.07 | EDGE WEAKENING |
+| ICPUSDT | SHORT | 54 | LOW | 42.6% | 25.9% | 13.0% | 55.6% | −0.15R | 0.75 | 72 | **−0.02R** | 0.96 | EDGE NEGATIVE |
+| BTCUSDT | LONG | 147 | MODERATE | 49.0% | 25.2% | 17.0% | 48.3% | −0.19R | 0.69 | 151 | **−0.26R** | 0.59 | EDGE NEGATIVE |
+| BTCUSDT | SHORT | 131 | MODERATE | 43.5% | 22.1% | 13.7% | 53.4% | −0.31R | 0.52 | 161 | **−0.14R** | 0.76 | EDGE NEGATIVE |
+
+Reading this honestly:
+
+* Under conservative costs the engine's edge is **thin to negative** on most pair/direction combinations. Only
+  SUIUSDT LONG (+0.18R OOS, PF 1.43, n=79, LOW EVIDENCE) and ETHUSDT LONG (+0.08R OOS, n=131, MODERATE, but recent
+  edge NEGATIVE) show a *historically positive out-of-sample expectancy under tested assumptions*, and neither sample
+  is large. EIGENUSDT SHORT looks best on paper (+0.24R OOS) but n=38 is VERY LOW EVIDENCE.
+* BTCUSDT is negative in both directions — consistent with the app's existing choice to blacklist BTC from autoscan.
+* This is exactly what the engine is for: the live panel now shows these numbers with Wilson intervals, and the
+  server raises **NO TRADE** reasons where pair-wide or OOS expectancy ≤ 0, so the AI cannot talk a negative-edge
+  setup into a trade.
+
+**Measured BTC coupling** (4h log-return correlation vs BTCUSDT; "against BTC" = share of daily closes in the opposite
+direction). This replaces the old hard-coded "BTC opposite ⇒ half size / skip" rule, which is now **informational only**:
+
+| Pair | Coupling (90d) | corr all / 90d | beta | Against BTC (all / 90d) | LONG when BTC opposed | SHORT when BTC opposed | Sizing rule from history |
+|---|---|---|---|---|---|---|---|
+| EIGENUSDT | MODERATE | 0.58 / 0.49 | 1.69 | 27% / **39%** | n=2 | n=9, +0.34R | not supported (n too small) |
+| ICPUSDT | MODERATE | 0.61 / 0.54 | 1.23 | 25% / 21% | n=5, +0.56R | n=6 | not supported |
+| SUIUSDT | TIGHT | 0.62 / 0.70 | 1.46 | 27% / 21% | n=2 | n=10, −0.45R | not supported |
+| SOLUSDT | TIGHT | 0.72 / 0.81 | 1.39 | 21% / 17% | n=4 | n=6 | not supported |
+| ETHUSDT | TIGHT | 0.85 / 0.87 | 1.13 | 17% / 10% | n=2 | n=1 | not supported |
+
+EIGENUSDT and ICPUSDT are the pairs in this set that most often trend against BTC (EIGEN closed against BTC on 39 % of
+the last 90 days). No pair has enough BTC-opposed setups to justify a sizing rule, so **no pair is written off for
+trading against BTC** — BTC context is shown, measured, and left to the trader and the pair's own structure.
 
 ## 14. Known remaining weaknesses
 
+0. **Venue mismatch**: the stored history is OKX, execution is Bybit. Perp prices track within a few bps but funding
+   schedules and wicks differ; re-run the build from a Bybit-served region (Vercel `sin1`, or `BYBIT_PROXY_URL`) to
+   replace it — the pipeline auto-selects Bybit when reachable and the run records its source.
 1. **Microstructure coverage**: 1m data is synced for ~3 weeks only, so ambiguity resolution below 5m is unavailable for
    most of the history; those candles resolve at 5m/15m or conservatively as STOP (slightly pessimistic, by design).
 2. **Live vs replay input parity**: the live scanner fetches 1m candles for every scan; the replay has 1m only inside its
@@ -167,10 +221,11 @@ under tested assumptions"*.
 |---|---|
 | Development | **Safe.** Default is paper; no credentials required; file store available. |
 | Paper trading | **Safe.** Same code path as live for sizing, limits and idempotency, no exchange calls. |
-| Small live testing | **Conditionally safe** — only after (a) `npm run check` passes, (b) history has been built for the pair from a served region, (c) `TRADING_MODE=live`, `TRADE_AUTH_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET` are set, and (d) the first orders are placed on **testnet** (`BYBIT_TESTNET=true`) to exercise fill reconciliation, stop verification and the manage state machine against a real matching engine. None of the exchange calls in `bybitPrivate.ts` were executed against Bybit from this environment. |
-| Full live deployment | **Not yet.** No out-of-sample market evidence exists; the execution layer is unit-tested against a fake exchange only. |
+| Small live testing | **Conditionally safe** — only after (a) `npm run check` passes, (b) history exists for the pair (six pairs are loaded; prefer a Bybit-sourced rebuild), (c) `TRADING_MODE=live`, `TRADE_AUTH_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET` are set, and (d) the first orders are placed on **testnet** (`BYBIT_TESTNET=true`) to exercise fill reconciliation, stop verification and the manage state machine against a real matching engine. None of the exchange calls in `bybitPrivate.ts` were executed against Bybit from this environment. |
+| Full live deployment | **Not yet.** Out-of-sample evidence is thin-to-negative for most pairs (§13); the execution layer is unit-tested against a fake exchange only. |
 
 ## Checks run
 
-`npm run typecheck` (clean), `npm run lint` (0 errors; 7 pre-existing warnings), `npm test` (10 files, 53 tests
-passing), `npm run build` (production build succeeds).
+`npm run typecheck` (clean), `npm run lint` (0 errors; 8 warnings, pre-existing style), `npm test` (11 files, 58 tests
+passing), `npm run build` (production build succeeds). Real-data pipeline run: 6 pairs, ~1.2 M candles, 4,638
+replayed trades, uploaded to Supabase and verified readable through `/api/evidence`.

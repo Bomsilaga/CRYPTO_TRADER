@@ -36,6 +36,7 @@ export interface SyncState {
   lastTime: number;
   count: number;
   updatedAt: string;
+  source?: string;
 }
 
 export type VolRegime = 'LOW' | 'NORMAL' | 'HIGH';
@@ -241,10 +242,23 @@ export interface BtcSplitResult {
 
 export interface FeatureNorm { mean: number; std: number }
 
+/** How this pair moves relative to BTC — measured, not assumed. */
+export interface BtcRelation {
+  corr4hAll: number;            // Pearson correlation of 4h log returns, full history
+  corr4h90d: number;            // last 90 days
+  beta4h: number;               // pair return per unit BTC return
+  oppositeDayShare: number;     // share of daily candles closing in the opposite direction to BTC
+  oppositeDayShare90d: number;
+  days: number;
+  coupling: 'TIGHT' | 'MODERATE' | 'LOOSE' | 'UNKNOWN';
+  note: string;
+}
+
 export interface BacktestRun {
   symbol: string;
   version: number;
   builtAt: string;
+  source?: string;
   config: BacktestConfig;
   coverage: Record<string, { from: number; to: number; count: number }>;
   decisions: number;
@@ -260,6 +274,7 @@ export interface BacktestRun {
     walkForward: { LONG: WalkForwardResult; SHORT: WalkForwardResult; all: WalkForwardResult };
     decay: { LONG: DecayResult; SHORT: DecayResult };
     btcSplit: { LONG: BtcSplitResult; SHORT: BtcSplitResult };
+    btcRelation?: BtcRelation;
   };
 }
 

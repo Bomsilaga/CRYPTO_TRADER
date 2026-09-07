@@ -18,7 +18,7 @@ import { closedBefore, candlesBetween } from './resample';
 import { computeFeatures, regimeKey, SIMILARITY_FEATURES } from './features';
 import { resolveOutcome, grossRFromFills } from './outcome';
 import { computeCosts, slip, type Fill } from './costs';
-import { summarize, walkForward, decay, btcSplit } from './stats';
+import { summarize, walkForward, decay, btcSplit, btcRelation } from './stats';
 
 export interface BacktestInput {
   symbol: string;
@@ -26,6 +26,7 @@ export interface BacktestInput {
   btcCandles?: CandleMap;        // BTCUSDT history for regime features
   funding?: FundingPoint[];
   config?: Partial<BacktestConfig>;
+  source?: string;
   from?: number;                 // restrict decisions to [from, to]
   to?: number;
   onProgress?: (done: number, total: number) => void;
@@ -153,10 +154,14 @@ export function runBacktest(input: BacktestInput): BacktestRun {
     const arr = input.candles[tf];
     if (arr?.length) coverage[tf] = { from: arr[0].time, to: arr[arr.length - 1].time, count: arr.length };
   }
+  const stats = buildStats(trades, config);
+  if (input.btcCandles?.['4h']?.length && input.candles['4h']?.length) {
+    stats.btcRelation = btcRelation(input.candles['4h'], input.btcCandles['4h'], input.candles['1d'] ?? [], input.btcCandles['1d'] ?? []);
+  }
   return {
-    symbol: input.symbol, version: 1, builtAt: new Date().toISOString(), config, coverage,
+    symbol: input.symbol, version: 2, builtAt: new Date().toISOString(), source: input.source, config, coverage,
     decisions, neutralDecisions: neutral, skippedWhileOpen, trades,
     featureNorms: featureNorms(trades),
-    stats: buildStats(trades, config),
+    stats,
   };
 }

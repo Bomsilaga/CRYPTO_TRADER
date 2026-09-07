@@ -26,6 +26,7 @@ export interface HistoricalEvidence {
   symbol: string;
   direction: 'LONG' | 'SHORT' | 'NEUTRAL';
   builtAt?: string;
+  source?: string;
   coverage?: BacktestRun['coverage'];
   decisions?: number;
   neutralDecisions?: number;
@@ -36,6 +37,7 @@ export interface HistoricalEvidence {
   similarSetups?: EvidenceBlock & { k: number; avgDistance: number };
   outOfSample?: EvidenceBlock & { inSampleExpectancyR: number; inSampleN: number; degradationR: number; folds: number; method: string; foldsPositive: number };
   btcSplit?: BacktestRun['stats']['btcSplit']['LONG'] & { alignedNow: 'ALIGNED' | 'OPPOSED' | 'RANGE' | 'UNKNOWN' };
+  btcRelation?: BacktestRun['stats']['btcRelation'];
   decay?: { status: string; note: string; last20ExpectancyR: number; last50ExpectancyR: number; last90dExpectancyR: number; longTermExpectancyR: number; last50N: number };
   scoreBand?: EvidenceBlock;
   warnings: string[];
@@ -77,7 +79,10 @@ export function buildEvidence(opts: {
   const cfg = run.config;
   const dirTrades = run.trades.filter(t => t.direction === direction);
   const setups = dirTrades.filter(t => t.score >= cfg.minSetupScore);
-  const pairWide = toBlock(summarize(setups, `${symbol} ${direction} · score ≥ ${cfg.minSetupScore}`));
+  // When the run was loaded without per-trade payloads (evidence/status routes), fall back to the stored block.
+  const pairWide = run.trades.length
+    ? toBlock(summarize(setups, `${symbol} ${direction} · score ≥ ${cfg.minSetupScore}`))
+    : toBlock({ ...run.stats[direction], label: `${symbol} ${direction} · score ≥ ${cfg.minSetupScore}` });
   const warnings: string[] = [];
   const noTrade: string[] = [];
 
@@ -119,14 +124,16 @@ export function buildEvidence(opts: {
   if (outOfSample.n >= 30 && outOfSample.degradationR > 0.25) warnings.push(`In-sample → out-of-sample degradation of ${outOfSample.degradationR.toFixed(2)}R suggests curve-fit or regime change.`);
   if (split.evidenceSupportsSizingRule && alignedNow === 'OPPOSED') warnings.push(`BTC opposes and this pair's history supports smaller size when BTC opposes (${split.differenceR.toFixed(2)}R gap).`);
   if (!split.evidenceSupportsSizingRule) warnings.push('BTC-context sizing rule not applied: history does not show a material, adequately-sampled gap.');
+  if (run.stats.btcRelation?.coupling === 'LOOSE') warnings.push(run.stats.btcRelation.note);
 
   return {
     ...base,
     available: true,
-    builtAt: run.builtAt, coverage: run.coverage, decisions: run.decisions, neutralDecisions: run.neutralDecisions,
+    builtAt: run.builtAt, source: run.source, coverage: run.coverage, decisions: run.decisions, neutralDecisions: run.neutralDecisions,
     minSetupScore: cfg.minSetupScore, executionProfile: cfg.profile,
     pairWide, regime, similarSetups: similar, outOfSample, scoreBand,
     btcSplit: { ...split, alignedNow },
+    btcRelation: run.stats.btcRelation,
     decay, warnings, noTradeReasons: noTrade,
   };
 }

@@ -23,7 +23,8 @@ Rules you never break:
 6. No certainty language. Never: guaranteed, almost certain, easy, moon, massive opportunity, can't lose, free money.
 7. Out-of-sample evidence outranks in-sample. Closest-match evidence outranks pair-wide evidence only when its sample is at least LOW EVIDENCE.
 8. If the trader's realised journal diverges from the model, say so; never blend the two.
-9. Be concise. A desk note, not an essay.`;
+9. BTC context is measured per pair (correlation, share of days moving against BTC, LONG/SHORT results when BTC opposes). It changes size only when the pair's own history supports it; it is never the sole reason for NO TRADE on a loosely coupled pair.
+10. Be concise. A desk note, not an essay.`;
 
 const pctCI = (r: { rate: number; hits: number; n: number; ci95: [number, number] }) => `${(r.rate * 100).toFixed(1)}% (${r.hits}/${r.n}; 95% CI ${(r.ci95[0] * 100).toFixed(1)}–${(r.ci95[1] * 100).toFixed(1)}%)`;
 const R = (x: number) => `${x >= 0 ? '+' : ''}${x.toFixed(2)}R`;
@@ -73,6 +74,8 @@ function buildPrompt(body: Record<string, unknown>): string {
       blockText(`C. CLOSEST MATCHES (k=${ev.similarSetups?.k ?? 0}, avg distance ${ev.similarSetups?.avgDistance.toFixed(2) ?? 'n/a'})`, ev.similarSetups),
       blockText(`D. OUT-OF-SAMPLE (${ev.outOfSample?.method ?? ''}; ${ev.outOfSample?.folds ?? 0} folds, ${ev.outOfSample?.foldsPositive ?? 0} positive; in-sample ${R(ev.outOfSample?.inSampleExpectancyR ?? 0)} n=${ev.outOfSample?.inSampleN ?? 0}; degradation ${R(ev.outOfSample?.degradationR ?? 0)})`, ev.outOfSample),
       `E. BTC CONTEXT TEST: ${ev.btcSplit?.note ?? 'n/a'} — BTC is currently ${ev.btcSplit?.alignedNow ?? 'UNKNOWN'} relative to this trade.`,
+      `   BTC COUPLING (measured): ${ev.btcRelation ? `${ev.btcRelation.coupling} · 4h corr all ${ev.btcRelation.corr4hAll.toFixed(2)} / 90d ${ev.btcRelation.corr4h90d.toFixed(2)} · beta ${ev.btcRelation.beta4h.toFixed(2)} · closes against BTC ${(ev.btcRelation.oppositeDayShare * 100).toFixed(0)}% of days (90d ${(ev.btcRelation.oppositeDayShare90d * 100).toFixed(0)}%) over ${ev.btcRelation.days} days` : 'not measured'}`,
+      ev.source && ev.source !== 'bybit' ? `   DATA SOURCE: ${ev.source.toUpperCase()} (fallback venue; execution is on Bybit — prices track within bps but are not identical)` : '',
       `F. RECENT EDGE: ${ev.decay?.status} — ${ev.decay?.note} (last20 ${R(ev.decay?.last20ExpectancyR ?? 0)}, last50 ${R(ev.decay?.last50ExpectancyR ?? 0)} n=${ev.decay?.last50N ?? 0}, last90d ${R(ev.decay?.last90dExpectancyR ?? 0)}, long-term ${R(ev.decay?.longTermExpectancyR ?? 0)})`,
       ev.warnings.length ? `WARNINGS: ${ev.warnings.join(' | ')}` : 'WARNINGS: none',
       ev.noTradeReasons.length ? `SERVER NO-TRADE REASONS (binding): ${ev.noTradeReasons.join(' | ')}` : 'SERVER NO-TRADE REASONS: none',

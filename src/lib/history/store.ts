@@ -19,7 +19,7 @@ export interface HistoryStore {
   upsertFunding(symbol: string, points: FundingPoint[]): Promise<number>;
   saveBacktest(run: BacktestRun): Promise<void>;
   getBacktest(symbol: string, opts?: { withTrades?: boolean }): Promise<BacktestRun | null>;
-  listBacktests(): Promise<{ symbol: string; builtAt: string; trades: number }[]>;
+  listBacktests(): Promise<{ symbol: string; builtAt: string; trades: number; source?: string; btcRelation?: BacktestRun['stats']['btcRelation'] }[]>;
 }
 
 const dedupe = (candles: StoredCandle[]) => {
@@ -90,7 +90,7 @@ export class FileHistoryStore implements HistoryStore {
       for (const f of files) {
         if (!f.endsWith('.json')) continue;
         const run = await this.readJson<BacktestRun | null>(this.p('backtests', f), null);
-        if (run) out.push({ symbol: run.symbol, builtAt: run.builtAt, trades: run.trades.length });
+        if (run) out.push({ symbol: run.symbol, builtAt: run.builtAt, trades: run.trades.length, source: run.source, btcRelation: run.stats.btcRelation });
       }
       return out;
     } catch { return []; }
@@ -103,7 +103,12 @@ type Row = Record<string, unknown>;
 
 export class SupabaseHistoryStore implements HistoryStore {
   private cache = new Map<string, { at: number; value: unknown }>();
-  constructor(private url: string, private key: string, private opts: { cacheMs?: number; fetchImpl?: typeof fetch } = {}) {}
+  constructor(private url: string, private key: string, private opts: { cacheMs?: number; fetchImpl?: typeof fetch; writeToken?: string } = {}) {}
+
+  /** Writes go through SECURITY DEFINER RPCs guarded by HISTORY_WRITE_TOKEN when no service-role key is present. */
+  private async rpc(fn: string, args: Record<string, unknown>) {
+    await this.rest('POST', `/rpc/${fn}`, { p_token: this.opts.writeToken, ...args });
+  }
 
   private async rest(method: 'GET' | 'POST' | 'PATCH', pathAndQuery: string, body?: unknown, headers: Record<string, string> = {}): Promise<Row[]> {
     const f = this.opts.fetchImpl ?? fetch;
@@ -128,7 +133,9 @@ export class SupabaseHistoryStore implements HistoryStore {
   }
   private async upsert(table: string, rows: Row[], onConflict: string, batch = 1000) {
     for (let i = 0; i < rows.length; i += batch) {
-      await this.rest('POST', `/${table}?on_conflict=${onConflict}`, rows.slice(i, i + batch), { Prefer: 'resolution=merge-duplicates,return=minimal' });
+      const chunk = rows.slice(i, i + batch);
+      if (this.opts.writeToken) { await this.rpc('hist_upsert', { p_table: table, p_rows: chunk }); continue; }
+      await this.rest('POST', `/${table}?on_conflict=${onConflict}`, chunk, { Prefer: 'resolution=merge-duplicates,return=minimal' });
     }
   }
   private cached<T>(key: string, load: () => Promise<T>): Promise<T> {
@@ -151,10 +158,10 @@ export class SupabaseHistoryStore implements HistoryStore {
   async getSyncState(symbol: string, tf: Timeframe) {
     const rows = await this.rest('GET', `/hist_sync_state?symbol=eq.${symbol}&timeframe=eq.${tf}&select=*`);
     const r = rows[0];
-    return r ? { symbol, timeframe: tf, firstTime: Number(r.first_time), lastTime: Number(r.last_time), count: Number(r.count), updatedAt: String(r.updated_at) } : null;
+    return r ? { symbol, timeframe: tf, firstTime: Number(r.first_time), lastTime: Number(r.last_time), count: Number(r.count), updatedAt: String(r.updated_at), source: r.source ? String(r.source) : undefined } : null;
   }
   async setSyncState(s: SyncState) {
-    await this.upsert('hist_sync_state', [{ symbol: s.symbol, timeframe: s.timeframe, first_time: s.firstTime, last_time: s.lastTime, count: s.count, updated_at: s.updatedAt }], 'symbol,timeframe');
+    await this.upsert('hist_sync_state', [{ symbol: s.symbol, timeframe: s.timeframe, first_time: s.firstTime, last_time: s.lastTime, count: s.count, updated_at: s.updatedAt, source: s.source ?? null }], 'symbol,timeframe');
   }
   async getFunding(symbol: string, from = 0, to = Number.MAX_SAFE_INTEGER) {
     const rows = await this.pagedGet(`/hist_funding?symbol=eq.${symbol}&time=gte.${from}&time=lte.${to}&order=time.asc&select=time,rate`);
@@ -167,16 +174,16 @@ export class SupabaseHistoryStore implements HistoryStore {
   async saveBacktest(run: BacktestRun) {
     const { trades, ...meta } = run;
     await this.upsert('hist_backtest_runs', [{
-      symbol: meta.symbol, version: meta.version, built_at: meta.builtAt, config: meta.config, coverage: meta.coverage,
+      symbol: meta.symbol, version: meta.version, built_at: meta.builtAt, source: meta.source ?? null, config: meta.config, coverage: meta.coverage,
       decisions: meta.decisions, neutral_decisions: meta.neutralDecisions, skipped_while_open: meta.skippedWhileOpen,
       feature_norms: meta.featureNorms, stats: meta.stats,
     }], 'symbol');
     // replace trades for this symbol
-    await this.rest('POST', `/rpc/hist_delete_backtest_trades`, { p_symbol: run.symbol }).catch(async () => {
-      // rpc may not exist; fall back to DELETE
+    if (this.opts.writeToken) await this.rpc('hist_delete_backtest_trades', { p_symbol: run.symbol });
+    else {
       const f = this.opts.fetchImpl ?? fetch;
       await f(`${this.url}/rest/v1/hist_backtest_trades?symbol=eq.${run.symbol}`, { method: 'DELETE', headers: { apikey: this.key, Authorization: `Bearer ${this.key}` } });
-    });
+    }
     await this.upsert('hist_backtest_trades', trades.map(t => ({
       symbol: t.symbol, time: t.time, direction: t.direction, setup_style: t.setupStyle, score: t.score,
       first_outcome: t.firstOutcome, tp1_hit: t.tp1Hit, tp2_hit: t.tp2Hit, tp3_hit: t.tp3Hit, stop_hit: t.stopHit,
@@ -195,7 +202,7 @@ export class SupabaseHistoryStore implements HistoryStore {
         trades = trows.map(x => x.payload as BacktestTrade);
       }
       return {
-        symbol, version: Number(r.version), builtAt: String(r.built_at), config: r.config as BacktestRun['config'],
+        symbol, version: Number(r.version), builtAt: String(r.built_at), source: r.source ? String(r.source) : undefined, config: r.config as BacktestRun['config'],
         coverage: r.coverage as BacktestRun['coverage'], decisions: Number(r.decisions), neutralDecisions: Number(r.neutral_decisions),
         skippedWhileOpen: Number(r.skipped_while_open), featureNorms: r.feature_norms as BacktestRun['featureNorms'],
         stats: r.stats as BacktestRun['stats'], trades,
@@ -203,8 +210,8 @@ export class SupabaseHistoryStore implements HistoryStore {
     });
   }
   async listBacktests() {
-    const rows = await this.rest('GET', `/hist_backtest_runs?select=symbol,built_at,decisions`);
-    return rows.map(r => ({ symbol: String(r.symbol), builtAt: String(r.built_at), trades: Number(r.decisions) }));
+    const rows = await this.rest('GET', `/hist_backtest_runs?select=symbol,built_at,decisions,source,stats`);
+    return rows.map(r => ({ symbol: String(r.symbol), builtAt: String(r.built_at), trades: Number(r.decisions), source: r.source ? String(r.source) : undefined, btcRelation: (r.stats as BacktestRun['stats'] | undefined)?.btcRelation }));
   }
 }
 
@@ -224,8 +231,10 @@ export function getHistoryStore(mode: 'read' | 'write' = 'read'): HistoryStore {
   const url = process.env.SUPABASE_URL ?? SUPABASE_URL_DEFAULT;
   const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (mode === 'write') {
-    if (!service) return new FileHistoryStore();
-    return new SupabaseHistoryStore(url, service);
+    if (service) return new SupabaseHistoryStore(url, service);
+    const token = process.env.HISTORY_WRITE_TOKEN;
+    if (token) return new SupabaseHistoryStore(url, process.env.SUPABASE_ANON_KEY || SUPABASE_ANON_DEFAULT, { writeToken: token });
+    return new FileHistoryStore();
   }
   return singleton ??= new SupabaseHistoryStore(url, service || process.env.SUPABASE_ANON_KEY || SUPABASE_ANON_DEFAULT);
 }
