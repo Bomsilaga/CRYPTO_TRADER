@@ -4105,7 +4105,7 @@ export default function Home() {
             <div className="glass" style={{ padding: 16 }}>
               <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 8 }}>2c · HISTORICAL EDGE ENGINE</div>
               <div style={{ fontSize: 11, color: 'var(--c-dim)', lineHeight: 1.6, marginBottom: 10 }}>
-                Downloads Bybit history for a pair (1m·5m·15m·1h·4h·1d + funding), replays the live engine hour by hour with no look-ahead, and stores net-of-cost statistics. Needs the execution token and a server that can reach api.bybit.com. Large pairs take several minutes; re-run until it reports complete. Or run <span className="mono">npm run history:build -- {symbol}</span> locally.
+                Downloads exchange history for a pair (1m·5m·15m·1h·4h·1d + funding) — Bybit when reachable, OKX as a fallback — replays the live engine hour by hour with no look-ahead, and stores net-of-cost statistics. Needs the execution token plus <span className="mono">HISTORY_WRITE_TOKEN</span> or the service key on the server. Large pairs take ~8 minutes; re-run until it reports complete. Or run <span className="mono">npm run history:build -- {symbol}</span> locally.
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button disabled={!!historyBuilding || execToken.length < 16} onClick={async () => {
