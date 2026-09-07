@@ -22,6 +22,19 @@ export interface StyleSignal {
   confidence: number;
   entryTiming: 'READY' | 'WAIT_PULLBACK' | 'WAIT_RETEST';
   signalText: string;
+  // Structural entry (levels.ts). `structural` is false when the ATR fallback was used.
+  entryMode: 'MARKET' | 'LIMIT';
+  entryStatus: 'NOW' | 'WAIT_PULLBACK' | 'WAIT_RETEST';
+  entryZone: [number, number];
+  entryBasis: string;
+  entryKinds: string[];
+  entryTfs: string[];
+  confluence: number;
+  confirmation: { pattern: string; tf: string } | null;
+  stopBasis: string;
+  targetBasis: [string, string, string];
+  structural: boolean;
+  maxWaitBars: number;
 }
 
 export interface DeepAnalysis {

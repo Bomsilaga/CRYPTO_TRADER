@@ -24,6 +24,30 @@ interface AutoScanResult {
   message?: string;
 }
 
+interface MasterSignal {
+  entry: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  leverage: number;
+  leverageWarning?: string;
+  netRR: number;
+  signalText: string;
+  entryMode?: 'MARKET' | 'LIMIT';
+  entryStatus?: 'NOW' | 'WAIT_PULLBACK' | 'WAIT_RETEST';
+  entryZone?: [number, number];
+  entryBasis?: string;
+  entryKinds?: string[];
+  entryTfs?: string[];
+  confluence?: number;
+  confirmation?: { pattern: string; tf: string } | null;
+  stopBasis?: string;
+  targetBasis?: [string, string, string];
+  structural?: boolean;
+  maxWaitBars?: number;
+}
+
 interface ScanResult {
   ok: boolean;
   symbol: string;
@@ -36,17 +60,8 @@ interface ScanResult {
   alignmentQuality: string;
   bestSetup: string;
   verdict: string;
-  masterSignal: {
-    entry: number;
-    stopLoss: number;
-    tp1: number;
-    tp2: number;
-    tp3: number;
-    leverage: number;
-    leverageWarning?: string;
-    netRR: number;
-    signalText: string;
-  };
+  masterSignal: MasterSignal;
+  levels?: { LONG: MasterSignal; SHORT: MasterSignal };
   deep: {
     rsi: number;
     wyckoffPhase: string;
@@ -1268,6 +1283,7 @@ export default function Home() {
       const data = await res.json() as ScanResult;
       setResult(data);
       if (data.ok) setMarketsOpen(false);
+      if (data.ok && data.masterSignal?.entryMode) setOrderType(data.masterSignal.entryMode === 'MARKET' ? 'Market' : 'Limit');
       if (btcRes) {
         const btcData = await btcRes.json() as ScanResult;
         if (btcData.ok) setBtcResult(btcData);
@@ -1965,6 +1981,23 @@ export default function Home() {
                         </div>
                       </div>
 
+                      {!isNoTrade && result.masterSignal.entryMode && (() => {
+                        const ms = result.masterSignal;
+                        const now = ms.entryStatus === 'NOW';
+                        const c = now ? '#4ade80' : '#fbbf24';
+                        return (
+                          <div style={{ position: 'relative', padding: '10px 18px', borderTop: '1px solid var(--c-border)', background: `${c}10`, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 900, letterSpacing: '0.08em', color: '#fff', background: c, boxShadow: `0 6px 18px -8px ${c}` }}>
+                              {ms.entryMode} · {ms.entryStatus?.replace(/_/g, ' ')}
+                            </span>
+                            <span className="mono" style={{ fontSize: 16, fontWeight: 800, color: 'var(--c-text)' }}>@ ${fmtPx(ms.entry)}</span>
+                            <span style={{ fontSize: 10, color: 'var(--c-dim)', fontWeight: 700 }}>
+                              {ms.structural === false ? 'ATR FALLBACK' : `${(ms.entryKinds ?? []).join('+')} ${(ms.entryTfs ?? []).join('/')}`}{ms.confirmation ? ` · ${ms.confirmation.pattern.toLowerCase().replace('_', ' ')} ${ms.confirmation.tf}` : ''}
+                            </span>
+                            <span style={{ flexBasis: '100%', fontSize: 11, color: 'var(--c-muted)', lineHeight: 1.45 }}>{ms.entryBasis}</span>
+                          </div>
+                        );
+                      })()}
                       {isNoTrade && (
                         <div style={{ position: 'relative', padding: '10px 18px', borderTop: '1px solid var(--c-border)', background: 'rgba(245,158,11,0.08)', fontSize: 12, color: '#fbbf24', fontWeight: 600 }}>
                           Multi-timeframe bias is split. The engine refuses to pick a side for you — capital preservation is the trade. Re-scan after the next 1h close.
@@ -1984,75 +2017,40 @@ export default function Home() {
                   return <HistoricalEdgePanel ev={result.historicalEvidence} realized={realized} riskAmount={accountSize * riskPct / 100} />;
                 })()}
 
-                {/* ── BOTH DIRECTIONS SIGNAL COMPARISON ───────────── */}
+                {/* ── BOTH DIRECTIONS — structural plans per side ───── */}
                 {(() => {
-                  const ms = result.masterSignal;
-                  const entry = ms.entry;
                   const fmtP = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
-                  const slDist = Math.abs(entry - ms.stopLoss);
-                  const tp1Dist = Math.abs(ms.tp1 - entry);
-                  const tp2Dist = Math.abs(ms.tp2 - entry);
-                  const tp3Dist = Math.abs(ms.tp3 - entry);
-
-                  const sides = [
-                    {
-                      dir: 'LONG' as const,
-                      color: '#22c55e',
-                      stopLoss: entry - slDist,
-                      tp1: entry + tp1Dist,
-                      tp2: entry + tp2Dist,
-                      tp3: entry + tp3Dist,
-                    },
-                    {
-                      dir: 'SHORT' as const,
-                      color: '#ef4444',
-                      stopLoss: entry + slDist,
-                      tp1: entry - tp1Dist,
-                      tp2: entry - tp2Dist,
-                      tp3: entry - tp3Dist,
-                    },
-                  ];
-
+                  const sides = (['LONG', 'SHORT'] as const).map(dir => ({ dir, color: dir === 'LONG' ? '#22c55e' : '#ef4444', lv: result.levels?.[dir] ?? (dir === result.direction ? result.masterSignal : null) }));
                   return (
-                    <div className="glass" style={{ padding: 16 }}>
-                      <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 13, color: 'var(--c-muted)' }}>SIGNALS — BOTH DIRECTIONS</div>
+                    <div className="glass fade-up d2" style={{ padding: 16 }}>
+                      <SectionTitle accent="#a5b4fc" title="Structural plans · both directions" right={<span className="eyebrow" style={{ fontSize: 9 }}>candlestick structure · 50 bars short-TF · 20 bars HTF</span>} />
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        {sides.map(({ dir, color, stopLoss, tp1, tp2, tp3 }) => {
+                        {sides.map(({ dir, color, lv }) => {
                           const isPrimary = dir === result.direction;
-                          const slPct = (slDist / entry * 100).toFixed(2);
-                          const tp1Pct = (tp1Dist / entry * 100).toFixed(1);
-                          const tp2Pct = (tp2Dist / entry * 100).toFixed(1);
-                          const tp3Pct = (tp3Dist / entry * 100).toFixed(1);
+                          if (!lv) return <div key={dir} className="stat-tile" style={{ color: 'var(--c-faint)', fontSize: 11 }}>no plan</div>;
+                          const risk = Math.abs(lv.entry - lv.stopLoss);
+                          const r = (p: number) => risk > 0 ? (Math.abs(p - lv.entry) / risk).toFixed(1) : '—';
+                          const now = lv.entryStatus === 'NOW';
                           return (
-                            <div key={dir} style={{
-                              padding: '10px 12px', borderRadius: 8,
-                              border: `${isPrimary ? 2 : 1}px solid ${isPrimary ? color + '66' : color + '22'}`,
-                              background: isPrimary ? `${color}08` : 'var(--c-inner)',
-                            }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                                <span style={{ padding: '2px 10px', borderRadius: 4, fontWeight: 800, fontSize: 12, background: `${color}22`, color, border: `1px solid ${color}44` }}>
-                                  {dir === 'LONG' ? '▲' : '▼'} {dir}
-                                </span>
+                            <div key={dir} style={{ padding: '10px 12px', borderRadius: 10, border: `${isPrimary ? 2 : 1}px solid ${isPrimary ? color + '66' : color + '22'}`, background: isPrimary ? `${color}08` : 'var(--c-inner)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                                <span style={{ padding: '2px 10px', borderRadius: 4, fontWeight: 800, fontSize: 12, background: `${color}22`, color, border: `1px solid ${color}44` }}>{dir === 'LONG' ? '▲' : '▼'} {dir}</span>
                                 {isPrimary && <span style={{ fontSize: 9, color, fontWeight: 700, letterSpacing: '0.06em' }}>ENGINE BIAS</span>}
+                                <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 800, letterSpacing: '0.06em', color: now ? '#4ade80' : '#fbbf24' }}>{lv.entryMode} · {(lv.entryStatus ?? '').replace(/_/g, ' ')}</span>
                               </div>
                               {[
-                                { label: 'Entry', value: entry, pct: null as string | null, c: 'var(--c-text)' },
-                                { label: 'Stop Loss', value: stopLoss, pct: `-${slPct}%`, c: '#ef4444' },
-                                { label: 'TP1 · 50%', value: tp1, pct: `+${tp1Pct}%`, c: '#4ade80' },
-                                { label: 'TP2 · 25%', value: tp2, pct: `+${tp2Pct}%`, c: '#22c55e' },
-                                { label: 'TP3 · 25%', value: tp3, pct: `+${tp3Pct}%`, c: '#16a34a' },
-                              ].map(({ label, value, pct, c }) => (
+                                { label: 'Entry', value: lv.entry, tag: lv.structural === false ? 'ATR' : (lv.entryKinds ?? []).join('+'), c: 'var(--c-text)' },
+                                { label: 'Stop', value: lv.stopLoss, tag: `-${(risk / lv.entry * 100).toFixed(2)}%`, c: '#ef4444' },
+                                { label: 'TP1 · 50%', value: lv.tp1, tag: `${r(lv.tp1)}R`, c: '#4ade80' },
+                                { label: 'TP2 · 25%', value: lv.tp2, tag: `${r(lv.tp2)}R`, c: '#22c55e' },
+                                { label: 'TP3 · 25%', value: lv.tp3, tag: `${r(lv.tp3)}R`, c: '#16a34a' },
+                              ].map(({ label, value, tag, c }) => (
                                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 5, fontSize: 11 }}>
                                   <span style={{ color: 'var(--c-faint)' }}>{label}</span>
-                                  <span style={{ fontWeight: 700, color: c }}>
-                                    ${fmtP(value)}{pct && <span style={{ fontWeight: 400, color: 'var(--c-faintest)', marginLeft: 4, fontSize: 10 }}>{pct}</span>}
-                                  </span>
+                                  <span className="mono" style={{ fontWeight: 700, color: c }}>${fmtP(value)}<span style={{ fontWeight: 400, color: 'var(--c-faintest)', marginLeft: 4, fontSize: 10 }}>{tag}</span></span>
                                 </div>
                               ))}
-                              <div style={{ borderTop: '1px solid var(--c-border)', marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                                <span style={{ color: 'var(--c-faint)' }}>Net R:R</span>
-                                <span style={{ fontWeight: 700, color: ms.netRR >= 2 ? '#22c55e' : '#eab308' }}>{ms.netRR.toFixed(2)}×</span>
-                              </div>
+                              <div style={{ borderTop: '1px solid var(--c-border)', marginTop: 6, paddingTop: 6, fontSize: 10, color: 'var(--c-dim)', lineHeight: 1.4 }}>{lv.entryBasis}</div>
                             </div>
                           );
                         })}
@@ -2190,7 +2188,7 @@ export default function Home() {
 
                   return (
                     <div className="glass fade-up d2" style={{ padding: 16, borderColor: liqBeforeSL ? 'rgba(239,68,68,0.5)' : undefined }}>
-                      <SectionTitle accent={dirColor} title="Price Ladder"
+                      <SectionTitle accent={dirColor} title={`Price Ladder · ${ms.entryMode ?? ''} ${(ms.entryStatus ?? '').replace(/_/g, ' ')}`}
                         right={<span className="eyebrow" style={{ fontSize: 9 }}>{effLev}× · liq {(liqDist * 100).toFixed(1)}% away</span>} />
                       {isNoTradeLv ? (
                         <div style={{ padding: '14px 12px', textAlign: 'center', color: 'var(--c-faint)', fontSize: 12, background: 'var(--c-inner)', borderRadius: 10, border: '1px dashed var(--c-border)' }}>

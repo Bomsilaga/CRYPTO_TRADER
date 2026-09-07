@@ -56,3 +56,32 @@ describe('outcome resolution', () => {
     expect(r.firstOutcome).toBe('TP1');
   });
 });
+
+describe('limit entry fill model', () => {
+  const lv = { entry: 99, stopLoss: 97, tp1: 101, tp2: 103, tp3: 105.5 };   // limit 1 below the decision close of 100
+  it('fills when a later candle trades through the limit, then resolves from the fill', () => {
+    const future = [c(t0, 100, 100.5, 99.6, 100.2), c(t0 + H, 100.2, 100.4, 98.8, 99.5), c(t0 + 2 * H, 99.5, 101.5, 99.2, 101.2)];
+    const r = resolveOutcome({ direction: 'LONG', levels: lv, decisionTime: t0, future, decisionTf: '1h', lower: {}, timeoutBars: 10, config: cfg, entryMode: 'LIMIT', maxWaitBars: 12 });
+    expect(r.filled).toBe(true);
+    expect(r.barsToFill).toBe(1);
+    expect(r.fillTime).toBe(t0 + H);
+    expect(r.tp1Hit).toBe(true);
+    expect(r.timeToTP1).toBe(2 * H);                 // measured from the fill candle
+  });
+  it('returns unfilled when price never comes back within the wait window, or runs to TP1 first', () => {
+    const away = Array.from({ length: 5 }, (_, i) => c(t0 + i * H, 100, 100.6, 99.4, 100.3));
+    expect(resolveOutcome({ direction: 'LONG', levels: lv, decisionTime: t0, future: away, decisionTf: '1h', lower: {}, timeoutBars: 10, config: cfg, entryMode: 'LIMIT', maxWaitBars: 3 }).filled).toBe(false);
+    const ran = [c(t0, 100, 101.5, 99.5, 101.2), c(t0 + H, 101.2, 101.4, 98.5, 99)];
+    expect(resolveOutcome({ direction: 'LONG', levels: lv, decisionTime: t0, future: ran, decisionTf: '1h', lower: {}, timeoutBars: 10, config: cfg, entryMode: 'LIMIT', maxWaitBars: 5 }).filled).toBe(false);
+  });
+  it('a fill candle that also touches the stop is a STOP (conservative), and a same-candle target is not credited without lower-TF proof', () => {
+    const both = [c(t0, 100, 101.5, 96.5, 98)];
+    const r = resolveOutcome({ direction: 'LONG', levels: lv, decisionTime: t0, future: both, decisionTf: '1h', lower: {}, timeoutBars: 10, config: cfg, entryMode: 'LIMIT', maxWaitBars: 5 });
+    expect(r.filled).toBe(true);
+    expect(r.firstOutcome).toBe('STOP');
+    const tpOnly = [c(t0, 100, 101.5, 98.8, 101.2), c(t0 + H, 101.2, 101.3, 100.5, 101)];
+    const r2 = resolveOutcome({ direction: 'LONG', levels: lv, decisionTime: t0, future: tpOnly, decisionTf: '1h', lower: {}, timeoutBars: 1, config: cfg, entryMode: 'LIMIT', maxWaitBars: 5 });
+    expect(r2.filled).toBe(true);
+    expect(r2.tp1Hit).toBe(false);                    // fill-then-target order unproven inside the same 1h candle
+  });
+});

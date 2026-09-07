@@ -123,6 +123,11 @@ export interface BacktestTrade {
   timeToTP3: number | null;
   timeToStop: number | null;
   holdMs: number;
+  entryMode: 'MARKET' | 'LIMIT';
+  entryStatus: 'NOW' | 'WAIT_PULLBACK' | 'WAIT_RETEST';
+  entryKinds: string[];
+  structural: boolean;
+  barsToFill: number;
   grossR: number;
   netR: number;
   feesR: number;
@@ -264,6 +269,7 @@ export interface BacktestRun {
   decisions: number;
   neutralDecisions: number;
   skippedWhileOpen: number;
+  unfilled?: number;
   trades: BacktestTrade[];
   featureNorms: Record<string, FeatureNorm>;
   stats: {

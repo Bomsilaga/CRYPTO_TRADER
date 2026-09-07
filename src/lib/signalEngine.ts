@@ -31,6 +31,7 @@
  */
 
 import type { RawCandle } from './bybit';
+import { structuralLevels, MAX_WAIT_BARS, type StructuralLevels, type LevelTf } from './levels';
 import type { Direction, SetupStyle, StyleSignal, DeepAnalysis, AlignmentQuality } from '@/types';
 import {
   rsi, atr, macd, bollingerBands, vwap, poc, volRatio,
@@ -150,7 +151,9 @@ export function buildSignalText(
     `📈 TIMEFRAME TRENDS:`,
     tfRow,
     ``,
-    `📥 ENTRY:    $${sig.entry.toFixed(5)}  [${sig.entryTiming.replace(/_/g, ' ')}]`,
+    `📥 ENTRY:    $${sig.entry.toFixed(5)}  [${sig.entryMode} · ${sig.entryStatus.replace(/_/g, ' ')}] ${sig.entryKinds.length ? sig.entryKinds.join('+') + ' ' + sig.entryTfs.join('/') : 'ATR fallback'}`,
+    `   basis:    ${sig.entryBasis}`,
+    `🛑 STOP basis: ${sig.stopBasis}`,
     `🛑 STOP:     $${sig.stopLoss.toFixed(5)}  (−${slPct}%)`,
     `🎯 TP1:      $${sig.tp1.toFixed(5)}  (+${tp1Pct}%)`,
     `🎯 TP2:      $${sig.tp2.toFixed(5)}  (+${tp2Pct}%)`,
@@ -199,6 +202,8 @@ export interface EngineResult {
   intradaySignal: StyleSignal;
   swingSignal: StyleSignal;
   deep: DeepAnalysis;
+  /** Structural levels for both directions (bestSetup style) — the UI's both-direction block and the AI use these. */
+  levels: { LONG: StyleSignal; SHORT: StyleSignal };
   candles: RawCandle[];
   avgMoves: { daily: number; h8: number; h4: number };
   spotAvgMoves: { daily: number; h8: number; h4: number } | null;
@@ -236,13 +241,7 @@ function buildVerdict(
   if (deep.macdBull && isLong)  confirms.push('MACD bullish');
   if (deep.macdBear && !isLong) confirms.push('MACD bearish');
 
-  let timing = '';
-  if (intradaySignal.entryTiming === 'READY')
-    timing = `Price is in the OTE zone — entry valid near $${intradaySignal.entry.toFixed(4)}.`;
-  else if (intradaySignal.entryTiming === 'WAIT_PULLBACK')
-    timing = `Price has run ahead — WAIT for pullback toward $${intradaySignal.entry.toFixed(4)}.`;
-  else
-    timing = `WAIT for retest near $${intradaySignal.entry.toFixed(4)}.`;
+  const timing = `${intradaySignal.entryMode} ${intradaySignal.entryStatus === 'NOW' ? 'NOW' : intradaySignal.entryStatus.replace('_', ' ')} @ $${intradaySignal.entry.toFixed(4)} — ${intradaySignal.entryBasis}`;
 
   let action = '';
   if (score >= 75 && confidence >= 65 && risks.length === 0)
@@ -434,23 +433,26 @@ export function runEngine(
 
   const bestSetup: SetupStyle = atrPct < 0.005 ? 'SCALP' : atrPct < 0.015 ? 'INTRADAY' : 'SWING';
 
-  function buildStyle(style: SetupStyle): StyleSignal {
-    const cfg = STYLE_CFG[style];
-    const isLong = direction !== 'SHORT';
-    const sl = isLong ? price - atrVal * cfg.slMult : price + atrVal * cfg.slMult;
-    const riskPerUnit = Math.abs(price - sl);
-    // ATR-based TPs: each TP = entry ± (ATR × multiplier).
-    // TP2 is always 2R (tpMults[1] / slMult = 2), making TP2 consistently achievable.
-    const tps = cfg.tpMults.map((mult) =>
-      isLong ? price + atrVal * mult : price - atrVal * mult
-    );
-    const grossRR = riskPerUnit > 0 ? Math.abs(tps[1] - price) / riskPerUnit : 0;
-    // FIXED: use corrected FEE_PCT = 0.150
-    const feeCost = price * FEE_PCT / 100;
-    const netRR   = Math.max(0, riskPerUnit > 0 ? (Math.abs(tps[1] - price) - feeCost) / riskPerUnit : 0);
+  // Structural levels per direction (candlestick structure across timeframes — not price ± ATR)
+  const levelMap: Partial<Record<LevelTf, RawCandle[]>> = {};
+  for (const tf of ['1m', '5m', '15m', '1h', '4h', '1d'] as LevelTf[]) if (candleMap[tf]?.length) levelMap[tf] = candleMap[tf];
+  const levelsFor = (dir: 'LONG' | 'SHORT', style: SetupStyle): StructuralLevels =>
+    structuralLevels({ candleMap: levelMap, direction: dir, price, style, atr: atrVal });
 
-    const entryTiming: StyleSignal['entryTiming'] = inOTE ? 'READY' :
-      (isLong && price > vwapVal) || (!isLong && price < vwapVal) ? 'WAIT_PULLBACK' : 'WAIT_RETEST';
+  function buildStyle(style: SetupStyle, dirOverride?: 'LONG' | 'SHORT'): StyleSignal {
+    const cfg = STYLE_CFG[style];
+    const dir: 'LONG' | 'SHORT' = dirOverride ?? (direction === 'SHORT' ? 'SHORT' : 'LONG');
+    const isLong = dir === 'LONG';
+    const lv = levelsFor(dir, style);
+    const entry = lv.entry;
+    const sl = lv.stop;
+    const riskPerUnit = Math.abs(entry - sl);
+    const tps = [lv.tp1, lv.tp2, lv.tp3, isLong ? entry + atrVal * (cfg.tpMults[3] ?? cfg.tpMults[2] * 1.4) : entry - atrVal * (cfg.tpMults[3] ?? cfg.tpMults[2] * 1.4)];
+    const grossRR = riskPerUnit > 0 ? Math.abs(tps[1] - entry) / riskPerUnit : 0;
+    const feeCost = entry * FEE_PCT / 100;
+    const netRR   = Math.max(0, riskPerUnit > 0 ? (Math.abs(tps[1] - entry) - feeCost) / riskPerUnit : 0);
+
+    const entryTiming: StyleSignal['entryTiming'] = lv.entryStatus === 'NOW' ? 'READY' : lv.entryStatus === 'WAIT_RETEST' ? 'WAIT_RETEST' : 'WAIT_PULLBACK';
 
     const { leverage, leverageOptions, reasoning, warning } = calcLeverage(
       style, atrPct, effectiveAlign, score, rsiVal, hasBOS, hasOB, hasSweep
@@ -458,8 +460,8 @@ export function runEngine(
 
     const sig: StyleSignal = {
       style,
-      direction: direction === 'NEUTRAL' ? 'LONG' : direction,
-      entry: price,
+      direction: dir,
+      entry,
       stopLoss: sl,
       tp1: tps[0], tp2: tps[1], tp3: tps[2], tp4: tps[3],
       grossRR, netRR,
@@ -469,10 +471,22 @@ export function runEngine(
       confidence,
       entryTiming,
       signalText: '',
+      entryMode: lv.entryMode,
+      entryStatus: lv.entryStatus,
+      entryZone: lv.entryZone,
+      entryBasis: lv.entryBasis,
+      entryKinds: lv.entryKinds,
+      entryTfs: lv.entryTfs,
+      confluence: lv.confluence,
+      confirmation: lv.confirmation,
+      stopBasis: lv.stopBasis,
+      targetBasis: lv.targetBasis,
+      structural: !lv.fallback,
+      maxWaitBars: MAX_WAIT_BARS[style],
     };
 
     sig.signalText = buildSignalText(
-      style, symbol, direction === 'NEUTRAL' ? 'LONG' : direction,
+      style, symbol, dir,
       sig, deep, effectiveAlign, alignQuality, score, trendMap, timestamp
     );
     return sig;
@@ -498,8 +512,11 @@ export function runEngine(
     ? `⏸ NO TRADE — timeframe bias is split (${Object.entries(trendMap).map(([k, v]) => `${k}:${v}`).join(' · ')}).\nThe engine will not manufacture a side. Wait for 1h + 4h to agree, then re-scan.\n\nReference levels below assume LONG for display only.\n\n${baseVerdict}`
     : baseVerdict;
 
+  const levels = { LONG: buildStyle(bestSetup, 'LONG'), SHORT: buildStyle(bestSetup, 'SHORT') };
+
   return {
     direction,
+    levels,
     totalScore: score,
     confidence,
     alignmentScore: effectiveAlign,

@@ -44,7 +44,8 @@ function blockText(title: string, b?: EvidenceBlock): string {
 function buildPrompt(body: Record<string, unknown>): string {
   const b = body as {
     symbol: string; price: number; direction: 'LONG' | 'SHORT' | 'NEUTRAL'; totalScore: number; confidence: number; alignmentScore: number; alignmentQuality: string; bestSetup: string;
-    masterSignal: { entry: number; stopLoss: number; tp1: number; tp2: number; tp3: number; leverage: number; netRR: number; entryTiming?: string };
+    masterSignal: { entry: number; stopLoss: number; tp1: number; tp2: number; tp3: number; leverage: number; netRR: number; entryTiming?: string; entryMode?: string; entryStatus?: string; entryBasis?: string; entryKinds?: string[]; entryTfs?: string[]; confirmation?: { pattern: string; tf: string } | null; stopBasis?: string; targetBasis?: string[]; structural?: boolean; entryZone?: [number, number] };
+    levels?: { LONG: { entry: number; stopLoss: number; tp1: number; tp2: number; tp3: number; entryMode: string; entryStatus: string; entryBasis: string; structural: boolean }; SHORT: { entry: number; stopLoss: number; tp1: number; tp2: number; tp3: number; entryMode: string; entryStatus: string; entryBasis: string; structural: boolean } };
     deep: { hasBOS: boolean; hasOB: boolean; hasFVG: boolean; hasChoCH: boolean; hasSweep: boolean; macdBull: boolean; macdBear: boolean; vwapAbove: boolean; volRatio: number; rsi: number; wyckoffPhase: string; amdBias?: string };
     trendMap?: Record<string, string>; fundingRate?: number | null; avgMoves?: { daily: number; h8: number; h4: number };
     features?: Record<string, unknown> | null;
@@ -101,7 +102,12 @@ ENGINE: bias ${b.direction}${isNeutral ? ' (NO TRADE by rule)' : ''} · Setup Qu
 Timeframes: ${tf} · alignment ${b.alignmentScore}% (${b.alignmentQuality})
 Confluences: ${conf} · RSI ${b.deep.rsi.toFixed(1)} · Wyckoff ${b.deep.wyckoffPhase} · AMD ${b.deep.amdBias ?? 'n/a'} · funding ${b.fundingRate == null ? 'n/a' : (b.fundingRate * 100).toFixed(4) + '%'}
 ${b.avgMoves ? `Typical range: 4h ±${b.avgMoves.h4.toFixed(2)}% · 8h ±${b.avgMoves.h8.toFixed(2)}% · day ±${b.avgMoves.daily.toFixed(2)}%` : ''}
-LEVELS (${isNeutral ? 'display only' : dir}): entry $${f(b.masterSignal.entry)} · stop $${f(b.masterSignal.stopLoss)} · TP1 $${f(b.masterSignal.tp1)} · TP2 $${f(b.masterSignal.tp2)} · TP3 $${f(b.masterSignal.tp3)}
+LEVELS (${isNeutral ? 'display only' : dir}; structural, from candlestick structure across timeframes — ${b.masterSignal.structural === false ? 'ATR FALLBACK, structure not found' : 'structure found'}):
+  ENTRY ${b.masterSignal.entryMode ?? 'n/a'} ${(b.masterSignal.entryStatus ?? '').replace(/_/g, ' ')} @ $${f(b.masterSignal.entry)}${b.masterSignal.entryZone ? ` (zone $${f(b.masterSignal.entryZone[0])}–$${f(b.masterSignal.entryZone[1])})` : ''} · ${(b.masterSignal.entryKinds ?? []).join('+') || 'ATR'} ${(b.masterSignal.entryTfs ?? []).join('/')}${b.masterSignal.confirmation ? ` · confirmation ${b.masterSignal.confirmation.pattern} on ${b.masterSignal.confirmation.tf}` : ' · no confirmation candle yet'}
+  why: ${b.masterSignal.entryBasis ?? 'n/a'}
+  STOP $${f(b.masterSignal.stopLoss)} — ${b.masterSignal.stopBasis ?? 'n/a'}
+  TP1 $${f(b.masterSignal.tp1)} (${b.masterSignal.targetBasis?.[0] ?? ''}) · TP2 $${f(b.masterSignal.tp2)} (${b.masterSignal.targetBasis?.[1] ?? ''}) · TP3 $${f(b.masterSignal.tp3)} (${b.masterSignal.targetBasis?.[2] ?? ''})
+${b.levels ? `OPPOSITE SIDE (${dir === 'LONG' ? 'SHORT' : 'LONG'}) structural plan: ${dir === 'LONG' ? b.levels.SHORT.entryMode : b.levels.LONG.entryMode} ${(dir === 'LONG' ? b.levels.SHORT.entryStatus : b.levels.LONG.entryStatus).replace(/_/g, ' ')} @ $${f(dir === 'LONG' ? b.levels.SHORT.entry : b.levels.LONG.entry)} · stop $${f(dir === 'LONG' ? b.levels.SHORT.stopLoss : b.levels.LONG.stopLoss)} — ${dir === 'LONG' ? b.levels.SHORT.entryBasis : b.levels.LONG.entryBasis}` : ''}
 BTC: ${b.btcDirection ?? 'n/a'} (score ${b.btcScore ?? 'n/a'})
 EXECUTION CONTEXT: hard limits — max risk ${limits.maxRiskPctPerTrade}%/trade, daily loss ${limits.maxDailyLossPct}%, max leverage ${limits.maxLeverage}×, max ${limits.maxConcurrentPositions} positions, ${limits.maxTradesPerDay} trades/day; open positions now ${acct.open}.
 
@@ -115,7 +121,7 @@ Write the desk note in EXACTLY this structure (plain text headings, no markdown 
 
 PAIR: ${b.symbol}
 BIAS: LONG / SHORT / NO TRADE
-ENTRY STATUS: ENTER / WAIT FOR PULLBACK / WAIT FOR RETEST / NO TRADE
+ENTRY STATUS: ENTER AT MARKET / LIMIT AT PULLBACK <price> / LIMIT AT RETEST <price> / NO TRADE  (use the structural entry price and mode given above — never invent a level)
 HISTORICAL EVIDENCE:
   (quote closest-match n, TP1 with 95% CI, TP2, TP3, OOS expectancy, profit factor, max losing streak — numbers verbatim from above, or "not available")
 REGIME:
