@@ -107,6 +107,15 @@ incremental. Other pairs: `HISTORY_WRITE_TOKEN=… npm run history:build -- <PAI
 
 ## 7. Backtest assumptions
 
+* **Entries are structural** (`src/lib/levels.ts`): order blocks, fair value gaps, OTE retracements, swing-low retests,
+  breakout retests and VWAP are located per timeframe (≥50 candles on 1m/5m/15m/1h, ≥20 on 4h/1d), scored by kind,
+  timeframe, freshness and distance, merged into confluence zones and confirmed by reversal candles. The advised entry
+  is MARKET (in zone + confirmation), LIMIT at the pullback zone, or LIMIT at a breakout retest. Stops sit beyond the
+  zone and the nearest swing; targets are liquidity levels at ≥1R/2R/3R (R-multiple fallback is flagged).
+* **Limit fills are modelled**: a LIMIT entry waits up to 6/12/30 bars (SCALP/INTRADAY/SWING) for price to trade
+  through it; if price runs to TP1 first, or never comes back, the setup is counted as *unfilled* and not traded. A fill
+  candle that also touches the stop is a STOP; a target touched inside the fill candle is not credited unless a lower
+  timeframe proves the order. Limit fills pay maker fees and no slippage; market fills pay taker + 5 bps.
 * Decision every closed 1h candle after a 210-bar warm-up; only candles closed at or before T are visible to the engine.
 * NEUTRAL bias ⇒ no trade (counted as `neutralDecisions`); no defaulting to LONG anywhere (engine, evidence, AI).
 * Exits: TP1 50 %, TP2 25 %, TP3 25 %; stop moved to entry after TP1 (`moveStopToBreakevenAfterTP1: true`).
@@ -157,29 +166,32 @@ months of the rolling 6m/1m walk-forward. Sample quality per §Phase 14 scale.
 
 | Pair | Dir | n (≥60) | Quality | TP1 | TP2 | TP3 | Stop-first | Exp (all) | PF | OOS n | **OOS exp** | OOS PF | Recent edge |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| EIGENUSDT | LONG | 33 | VERY LOW | 48.5% | 24.2% | 18.2% | 51.5% | −0.05R | 0.91 | 20 | **−0.14R** | 0.77 | INSUFFICIENT |
-| EIGENUSDT | SHORT | 33 | VERY LOW | 57.6% | 39.4% | 15.2% | 39.4% | +0.22R | 1.53 | 38 | **+0.24R** | 1.67 | INSUFFICIENT |
-| ETHUSDT | LONG | 105 | MODERATE | 61.0% | 32.4% | 21.0% | 38.1% | +0.10R | 1.23 | 131 | **+0.08R** | 1.18 | EDGE NEGATIVE |
-| ETHUSDT | SHORT | 92 | LOW | 51.1% | 28.3% | 20.7% | 45.7% | −0.02R | 0.96 | 106 | **−0.02R** | 0.97 | EDGE NEGATIVE |
-| SOLUSDT | LONG | 81 | LOW | 58.0% | 29.6% | 17.3% | 42.0% | +0.07R | 1.15 | 95 | **−0.05R** | 0.91 | STABLE |
-| SOLUSDT | SHORT | 66 | LOW | 47.0% | 22.7% | 13.6% | 50.0% | −0.13R | 0.77 | 82 | **−0.14R** | 0.76 | EDGE NEGATIVE |
-| SUIUSDT | LONG | 58 | LOW | 58.6% | 34.5% | 22.4% | 41.4% | +0.18R | 1.41 | 79 | **+0.18R** | 1.43 | STABLE |
-| SUIUSDT | SHORT | 61 | LOW | 57.4% | 26.2% | 13.1% | 42.6% | +0.05R | 1.10 | 66 | **+0.08R** | 1.17 | EDGE WEAKENING |
-| ICPUSDT | LONG | 60 | LOW | 50.0% | 31.7% | 18.3% | 46.7% | +0.02R | 1.04 | 84 | **+0.04R** | 1.07 | EDGE WEAKENING |
-| ICPUSDT | SHORT | 54 | LOW | 42.6% | 25.9% | 13.0% | 55.6% | −0.15R | 0.75 | 72 | **−0.02R** | 0.96 | EDGE NEGATIVE |
-| BTCUSDT | LONG | 147 | MODERATE | 49.0% | 25.2% | 17.0% | 48.3% | −0.19R | 0.69 | 151 | **−0.26R** | 0.59 | EDGE NEGATIVE |
-| BTCUSDT | SHORT | 131 | MODERATE | 43.5% | 22.1% | 13.7% | 53.4% | −0.31R | 0.52 | 161 | **−0.14R** | 0.76 | EDGE NEGATIVE |
+| EIGENUSDT | LONG | 42 | VERY LOW | 40.5% | 28.6% | 11.9% | 59.5% | −0.01R | 0.99 | 20 | **−0.10R** | 0.85 | INSUFFICIENT |
+| EIGENUSDT | SHORT | 58 | LOW | 43.1% | 31.0% | 15.5% | 50.0% | +0.15R | 1.28 | 59 | **+0.01R** | 1.02 | STABLE |
+| ETHUSDT | LONG | 94 | LOW | 52.1% | 35.1% | 19.1% | 44.7% | +0.24R | 1.48 | 102 | **+0.09R** | 1.17 | EDGE WEAKENING |
+| ETHUSDT | SHORT | 75 | LOW | 54.7% | 29.3% | 17.3% | 41.3% | +0.26R | 1.57 | 108 | **+0.18R** | 1.37 | STABLE |
+| SOLUSDT | LONG | 100 | MODERATE | 55.0% | 30.0% | 19.0% | 44.0% | +0.22R | 1.46 | 105 | **+0.14R** | 1.29 | STABLE |
+| SOLUSDT | SHORT | 74 | LOW | 54.1% | 28.4% | 14.9% | 43.2% | +0.20R | 1.44 | 85 | **+0.22R** | 1.47 | STABLE |
+| SUIUSDT | LONG | 75 | LOW | 53.3% | 28.0% | 20.0% | 46.7% | +0.36R | 1.74 | 84 | **+0.34R** | 1.66 | STABLE |
+| SUIUSDT | SHORT | 73 | LOW | 45.2% | 27.4% | 15.1% | 52.1% | +0.22R | 1.39 | 79 | **+0.25R** | 1.47 | STABLE |
+| ICPUSDT | LONG | 62 | LOW | 54.8% | 32.3% | 19.4% | 43.5% | +0.23R | 1.49 | 75 | **+0.01R** | 1.01 | STABLE |
+| ICPUSDT | SHORT | 73 | LOW | 46.6% | 20.5% | 16.4% | 49.3% | +0.02R | 1.04 | 86 | **+0.04R** | 1.08 | STABLE |
+| BTCUSDT | LONG | 117 | MODERATE | 46.2% | 21.4% | 12.8% | 47.9% | +0.06R | 1.10 | 134 | **−0.05R** | 0.91 | STABLE |
+| BTCUSDT | SHORT | 113 | MODERATE | 44.2% | 28.3% | 13.3% | 50.4% | +0.03R | 1.05 | 118 | **−0.05R** | 0.92 | STABLE |
 
-Reading this honestly:
+Reading this honestly (structural-entry replay, 2026-09-07 rebuild; the earlier ATR-entry replay is superseded):
 
-* Under conservative costs the engine's edge is **thin to negative** on most pair/direction combinations. Only
-  SUIUSDT LONG (+0.18R OOS, PF 1.43, n=79, LOW EVIDENCE) and ETHUSDT LONG (+0.08R OOS, n=131, MODERATE, but recent
-  edge NEGATIVE) show a *historically positive out-of-sample expectancy under tested assumptions*, and neither sample
-  is large. EIGENUSDT SHORT looks best on paper (+0.24R OOS) but n=38 is VERY LOW EVIDENCE.
-* BTCUSDT is negative in both directions — consistent with the app's existing choice to blacklist BTC from autoscan.
-* This is exactly what the engine is for: the live panel now shows these numbers with Wilson intervals, and the
-  server raises **NO TRADE** reasons where pair-wide or OOS expectancy ≤ 0, so the AI cannot talk a negative-edge
-  setup into a trade.
+* Structural entries improved most pairs versus the ATR-entry replay (e.g. SOLUSDT LONG −0.05R → +0.14R OOS; SUIUSDT
+  LONG +0.18R → +0.34R OOS; ETHUSDT SHORT −0.02R → +0.18R OOS), because limit entries at pullback zones fill at better
+  prices and unfilled runaway setups are no longer traded.
+* Candidates with a *historically positive out-of-sample expectancy under tested assumptions*: SUIUSDT LONG (+0.34R,
+  PF 1.66, n=84) and SHORT (+0.25R), SOLUSDT both sides (+0.14R / +0.22R), ETHUSDT SHORT (+0.18R, n=108). All are LOW
+  to MODERATE evidence — no sample exceeds 250.
+* Marginal (OOS ≈ 0): EIGENUSDT SHORT, ICPUSDT both sides, ETHUSDT LONG. Negative: EIGENUSDT LONG (n=20), BTCUSDT both
+  sides. The server raises NO TRADE reasons where pair-wide or OOS expectancy ≤ 0.
+* Background Telegram alerts (`/api/cron/scan`) use these numbers as gates: a setup is only sent when the pair's
+  pair-wide and out-of-sample expectancy are positive, the entry is structural, TP2 ≥ 2R, and no server no-trade
+  reason exists.
 
 **Measured BTC coupling** (4h log-return correlation vs BTCUSDT; "against BTC" = share of daily closes in the opposite
 direction). This replaces the old hard-coded "BTC opposite ⇒ half size / skip" rule, which is now **informational only**:
@@ -226,6 +238,7 @@ trading against BTC** — BTC context is shown, measured, and left to the trader
 
 ## Checks run
 
-`npm run typecheck` (clean), `npm run lint` (0 errors; 8 warnings, pre-existing style), `npm test` (11 files, 58 tests
-passing), `npm run build` (production build succeeds). Real-data pipeline run: 6 pairs, ~1.2 M candles, 4,638
-replayed trades, uploaded to Supabase and verified readable through `/api/evidence`.
+`npm run typecheck` (clean), `npm run lint` (0 errors; warnings are pre-existing style), `npm test` (13 files, 70 tests
+passing), `npm run build` (production build succeeds). Real-data pipeline run: 6 pairs, ~1.2 M candles, 3,998
+replayed trades with structural entries (limit fills modelled), uploaded to Supabase and verified readable through
+`/api/evidence`.
