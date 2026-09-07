@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import type { HistoricalEvidence, EvidenceBlock } from '@/lib/history/evidence';
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 
@@ -61,6 +62,9 @@ interface ScanResult {
   };
   avgMoves?: { daily: number; h8: number; h4: number };
   spotAvgMoves?: { daily: number; h8: number; h4: number } | null;
+  fundingRate?: number | null;
+  features?: Record<string, unknown> | null;
+  historicalEvidence?: HistoricalEvidence | null;
   error?: string;
 }
 
@@ -83,6 +87,16 @@ interface TradeResult {
   tpStatus?: { tp: string; ok: boolean; msg: string; qty?: number; price?: number }[];
   netIfAllTargets?: string;
   netIfStopped?: string;
+  hard?: boolean;
+  soft?: boolean;
+  rejections?: string[];
+  mode?: 'paper' | 'live';
+  liveRefusedBecause?: string[];
+  state?: string;
+  manage?: boolean;
+  tradeId?: string;
+  idempotent?: boolean;
+  actual?: { qty: number; avgPrice: number; riskUsd: number; riskVsTargetPct: number; liqPrice: number | null; liqDistancePct: number | null; stopToLiqPct: number | null };
   fundingChecked?: boolean;
   feeEstimate?: {
     totalFee: string;
@@ -626,6 +640,106 @@ function PriceLadder({ direction, entry, stopLoss, tp1, tp2, tp3, liq, pnl }: {
   );
 }
 
+/* ─── Historical Edge (independent exchange-data replay) ─────────────── */
+
+const qualityColor = (q: string) => q.startsWith('INSUFF') ? '#f87171' : q.startsWith('VERY') ? '#fb923c' : q.startsWith('LOW') ? '#fbbf24' : q === 'MODERATE' ? '#a5b4fc' : '#4ade80';
+
+function EdgeColumn({ title, b, extra, highlight }: { title: string; b?: EvidenceBlock; extra?: string; highlight?: boolean }) {
+  const pc = (r: { rate: number }) => `${(r.rate * 100).toFixed(1)}%`;
+  const ci = (r: { ci95: [number, number] }) => `${(r.ci95[0] * 100).toFixed(0)}–${(r.ci95[1] * 100).toFixed(0)}`;
+  const empty = !b || b.n === 0;
+  const expC = !b ? 'var(--c-faintest)' : b.expectancyR > 0.15 ? '#4ade80' : b.expectancyR > 0 ? '#fbbf24' : '#f87171';
+  return (
+    <div className="stat-tile" style={{ minWidth: 0, borderColor: highlight ? 'rgba(129,140,248,0.45)' : undefined, background: highlight ? 'rgba(99,102,241,0.08)' : undefined }}>
+      <div className="eyebrow" style={{ fontSize: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 4 }}>
+        <span className="mono" style={{ fontSize: 18, fontWeight: 800, color: 'var(--c-text)' }}>{b?.n ?? 0}</span>
+        <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.06em', color: qualityColor(b?.quality ?? 'INSUFFICIENT') }}>{b?.quality ?? 'INSUFFICIENT'}</span>
+      </div>
+      {extra && <div style={{ fontSize: 9, color: 'var(--c-faintest)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{extra}</div>}
+      {[{ k: 'TP1', r: b?.tp1, c: '#4ade80' }, { k: 'TP2', r: b?.tp2, c: '#22c55e' }, { k: 'TP3', r: b?.tp3, c: '#16a34a' }, { k: 'STOP', r: b?.stopFirst, c: '#f87171' }].map(row => (
+        <div key={row.k} style={{ marginTop: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--c-dim)' }}>
+            <span style={{ fontWeight: 700, color: row.c }}>{row.k}</span>
+            <span className="mono">{empty || !row.r ? '—' : <>{pc(row.r)} <span style={{ color: 'var(--c-faintest)' }}>[{ci(row.r)}]</span></>}</span>
+          </div>
+          <div style={{ height: 4, borderRadius: 2, background: 'var(--c-border)', marginTop: 2, position: 'relative', overflow: 'hidden' }}>
+            {!empty && row.r && <>
+              <div style={{ position: 'absolute', left: `${row.r.ci95[0] * 100}%`, width: `${(row.r.ci95[1] - row.r.ci95[0]) * 100}%`, top: 0, bottom: 0, background: `${row.c}33` }} />
+              <div style={{ position: 'absolute', left: 0, width: `${row.r.rate * 100}%`, top: 0, bottom: 0, background: row.c, opacity: 0.9 }} />
+            </>}
+          </div>
+        </div>
+      ))}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 10 }}>
+        <span style={{ color: 'var(--c-faint)' }}>Exp</span>
+        <span className="mono" style={{ fontWeight: 800, color: expC }}>{empty ? '—' : `${b!.expectancyR >= 0 ? '+' : ''}${b!.expectancyR.toFixed(2)}R`}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+        <span style={{ color: 'var(--c-faint)' }}>PF</span>
+        <span className="mono" style={{ fontWeight: 700, color: empty ? 'var(--c-faintest)' : b!.profitFactor >= 1.5 ? '#4ade80' : b!.profitFactor >= 1 ? '#fbbf24' : '#f87171' }}>{empty ? '—' : b!.profitFactor >= 99 ? '∞' : b!.profitFactor.toFixed(2)}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+        <span style={{ color: 'var(--c-faint)' }}>Streak</span>
+        <span className="mono" style={{ color: 'var(--c-dim)' }}>{empty ? '—' : `${b!.maxConsecutiveLosses}L · DD ${b!.maxDrawdownR.toFixed(0)}R`}</span>
+      </div>
+    </div>
+  );
+}
+
+function HistoricalEdgePanel({ ev, realized, riskAmount }: { ev?: HistoricalEvidence | null; realized: { n: number; expectancyR: number; tp1Rate: number } | null; riskAmount: number }) {
+  const available = !!ev?.available && !!ev.pairWide;
+  const oos = ev?.outOfSample;
+  const sim = ev?.similarSetups;
+  const noTrade = ev?.noTradeReasons ?? [];
+  const warnings = ev?.warnings ?? [];
+  const decayC = ev?.decay?.status === 'STABLE' ? '#4ade80' : ev?.decay?.status === 'EDGE WEAKENING' ? '#fbbf24' : ev?.decay?.status === 'EDGE NEGATIVE' ? '#f87171' : 'var(--c-faint)';
+  const modelDollar = (r: number) => `${r >= 0 ? '+' : ''}$${Math.abs(r * riskAmount).toFixed(0)}`;
+  return (
+    <div className="glass fade-up d1" style={{ padding: 16, borderColor: noTrade.length ? 'rgba(239,68,68,0.45)' : undefined }}>
+      <SectionTitle accent="#a855f7" title="Historical Edge · exchange replay"
+        right={<span className="eyebrow" style={{ fontSize: 9 }}>{available ? `${ev!.executionProfile} · built ${ev!.builtAt?.slice(0, 10)} · ${ev!.decisions} decisions` : 'ENGINE PENDING'}</span>} />
+      {!available ? (
+        <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 8, padding: '10px 12px', background: 'var(--c-inner)', border: '1px dashed var(--c-border)', fontSize: 11, color: 'var(--c-dim)', lineHeight: 1.5 }}>
+          <div className="shimmer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+          {ev?.reason ?? 'No independent history for this pair yet.'} Historical probabilities come only from replayed Bybit market data — never from your journal or the AI. Build it in Setup → History.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+            <EdgeColumn title="Pair history" b={ev!.pairWide} extra={`${ev!.symbol.replace('USDT','')} ${ev!.direction} · score ≥ ${ev!.minSetupScore}`} />
+            <EdgeColumn title="Current regime" b={ev!.regime} extra={ev!.regime ? `${ev!.regime.regimeKey.replace(/_/g, ' ').toLowerCase()} · ${(ev!.regime.regimeShareOfPair * 100).toFixed(0)}% of pair${ev!.regime.rare ? ' · RARE' : ''}` : undefined} />
+            <EdgeColumn title="Closest matches" b={sim} extra={sim ? `k=${sim.k} · avg dist ${sim.avgDistance.toFixed(2)}` : undefined} highlight />
+            <EdgeColumn title="Out-of-sample" b={oos} extra={oos ? `${oos.folds} folds · ${oos.foldsPositive} positive · IS ${oos.inSampleExpectancyR >= 0 ? '+' : ''}${oos.inSampleExpectancyR.toFixed(2)}R` : undefined} />
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, fontSize: 10 }}>
+            <span className="chip" style={{ background: `${decayC}18`, color: decayC, borderColor: `${decayC}44` }}>RECENT EDGE · {ev!.decay?.status}</span>
+            <span className="chip" style={{ background: 'rgba(148,163,184,0.10)', color: 'var(--c-muted)', borderColor: 'var(--c-border)' }} title={ev!.btcSplit?.note}>
+              BTC {ev!.btcSplit?.alignedNow} · {ev!.btcSplit?.evidenceSupportsSizingRule ? `rule supported (${ev!.btcSplit.differenceR >= 0 ? '+' : ''}${ev!.btcSplit.differenceR.toFixed(2)}R gap)` : 'no sizing rule (not supported by history)'}
+            </span>
+            {sim && sim.n >= 20 && <span className="chip" style={{ background: 'rgba(99,102,241,0.14)', color: '#c7d2fe', borderColor: 'rgba(129,140,248,0.4)' }}>at ${riskAmount.toFixed(0)} risk · match exp {modelDollar(sim.expectancyR)}/trade</span>}
+          </div>
+          {noTrade.length > 0 && (
+            <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.4)', fontSize: 11, color: '#fca5a5' }}>
+              <div className="eyebrow" style={{ color: '#f87171', fontSize: 8, marginBottom: 4 }}>History says NO TRADE</div>
+              {noTrade.map((r, i) => <div key={i}>• {r}</div>)}
+            </div>
+          )}
+          {warnings.length > 0 && (
+            <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 8, background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.3)', fontSize: 10, color: '#fbbf24' }}>
+              {warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
+            </div>
+          )}
+          <div style={{ marginTop: 8, fontSize: 9, color: 'var(--c-faintest)' }}>
+            {ev!.sampleQualityScale}. Net of fees, slippage and funding. Same-candle TP/SL ambiguity resolved on lower timeframes, else counted as STOP.
+            {realized && realized.n >= 10 && sim && <> · Your realised: {realized.expectancyR >= 0 ? '+' : ''}{realized.expectancyR.toFixed(2)}R over {realized.n} (model {sim.expectancyR >= 0 ? '+' : ''}{sim.expectancyR.toFixed(2)}R) — kept separate.</>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ─── Main component ─────────────────────────────────────────────────────── */
 
 type Tab = 'scan' | 'radar' | 'calc' | 'trades' | 'log' | 'settings';
@@ -653,6 +767,10 @@ export default function Home() {
   // Settings state
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
+  const [execToken, setExecToken] = useState('');
+  const [historyBuilding, setHistoryBuilding] = useState<string | null>(null);
+  const [historyMsg, setHistoryMsg] = useState<string | null>(null);
+  const [manageState, setManageState] = useState<{ tradeId: string; state: string; note: string } | null>(null);
   const [showSecret, setShowSecret] = useState(false);
   const [liveMode, setLiveMode] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -741,6 +859,7 @@ export default function Home() {
         const s = JSON.parse(saved);
         if (s.apiKey)    setApiKey(s.apiKey);
         if (s.apiSecret) setApiSecret(s.apiSecret);
+        if (s.execToken) setExecToken(s.execToken);
         if (typeof s.liveMode === 'boolean') setLiveMode(s.liveMode);
         if (s.riskPct)   setRiskPct(s.riskPct);
         if (s.orderType) setOrderType(s.orderType);
@@ -820,7 +939,7 @@ export default function Home() {
   function saveSettings() {
     try {
       localStorage.setItem('4scans-settings', JSON.stringify({
-        apiKey, apiSecret, liveMode, riskPct, orderType, aiProvider, theme,
+        apiKey, apiSecret, execToken, liveMode, riskPct, orderType, aiProvider, theme,
         accountSize, dailyLossLimit, dailyTarget, maxTrades, targetSpotPct, timezone,
         anthropicKey, openaiKey, deepseekKey,
       }));
@@ -1198,6 +1317,12 @@ export default function Home() {
           ...result,
           provider: aiProvider,
           clientApiKey: aiKeyMap[aiProvider] || undefined,
+          realized: (() => {
+            const closed = tradesRef.current.filter(t => t.status !== 'open' && t.symbol === result.symbol && t.direction === result.direction);
+            if (closed.length < 10) return null;
+            const rs = closed.map(t => { const risk = Math.abs(t.entry - t.stopLoss) * (t.qty || 0); return risk > 0 ? (t.pnlDollars ?? 0) / risk : 0; });
+            return { n: closed.length, expectancyR: rs.reduce((a, b) => a + b, 0) / rs.length, tp1Rate: closed.filter(t => t.tp1Hit || t.status === 'tp3').length / closed.length };
+          })(),
           account: {
             accountSize, riskPct, orderType,
             leverage: userLeverage || result.masterSignal.leverage,
@@ -1266,11 +1391,14 @@ export default function Home() {
     const rawLev = typeof userLeverage === 'number' ? userLeverage : result.masterSignal.leverage;
     const effectiveLev = rawLev;
 
+    // Idempotent execution: one id per click; a retry of the same click returns the same result.
+    const tradeId = (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
     try {
       const res = await fetch('/api/trade', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(execToken ? { 'x-4scans-auth': execToken } : {}) },
         body: JSON.stringify({
+          tradeId,
           symbol: result.symbol,
           direction: result.direction,
           entry: result.masterSignal.entry,
@@ -1293,6 +1421,20 @@ export default function Home() {
       });
       const data = await res.json() as TradeResult;
       setTradeResult(data);
+      if (data.manage && data.tradeId) {
+        setManageState({ tradeId: data.tradeId, state: data.state ?? 'ENTRY_PENDING', note: 'Limit entry resting — targets attach on fill.' });
+        const poll = async (left: number) => {
+          if (left <= 0) return;
+          try {
+            const r = await fetch('/api/trade/manage', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(execToken ? { 'x-4scans-auth': execToken } : {}) }, body: JSON.stringify({ tradeId: data.tradeId, ...(apiKey && { apiKey }), ...(apiSecret && { apiSecret }) }) });
+            const m = await r.json() as { state?: string; events?: { msg: string }[]; error?: string };
+            setManageState({ tradeId: data.tradeId!, state: m.state ?? 'unknown', note: m.error ?? m.events?.slice(-1)[0]?.msg ?? '' });
+            if (m.state && ['MANAGED', 'CLOSED', 'EMERGENCY_CLOSED'].includes(m.state)) return;
+          } catch { /* keep polling */ }
+          setTimeout(() => poll(left - 1), 10_000);
+        };
+        setTimeout(() => poll(90), 8_000);
+      }
 
       // Save to trade journal on success/paper
       if (data.paper || data.success) {
@@ -1824,58 +1966,14 @@ export default function Home() {
                   );
                 })()}
 
-                {/* ── HISTORICAL EDGE ─────────────────────────────────────── */}
+                {/* ── HISTORICAL EDGE (independent exchange replay; journal is secondary) ── */}
                 {(() => {
-                  const closed = trades.filter(t => t.status !== 'open');
-                  const bySym = closed.filter(t => t.symbol === result.symbol);
-                  const byDir = closed.filter(t => t.direction === result.direction && t.bestSetup === result.bestSetup);
-                  const sample = bySym.length >= 5 ? bySym : byDir.length >= 5 ? byDir : closed;
-                  const scope  = bySym.length >= 5 ? `${result.symbol.replace('USDT','')} only` : byDir.length >= 5 ? `${result.direction} · ${result.bestSetup}` : 'all closed trades';
-                  const n = sample.length;
-                  const MIN = 5;
-                  const ready = n >= MIN;
-                  const rate = (f: (t: TradeEntry) => boolean) => ready ? Math.round(sample.filter(f).length / n * 100) : null;
-                  const tp1R = rate(t => !!t.tp1Hit || t.status === 'tp3');
-                  const tp2R = rate(t => !!t.tp2Hit || t.status === 'tp3');
-                  const tp3R = rate(t => !!t.tp3Hit || t.status === 'tp3');
-                  const pnls = sample.map(t => t.pnlDollars ?? 0);
-                  const wins = pnls.filter(p => p > 0), losses = pnls.filter(p => p < 0);
-                  const expectancy = ready ? pnls.reduce((a, b) => a + b, 0) / n : null;
-                  const grossW = wins.reduce((a, b) => a + b, 0), grossL = Math.abs(losses.reduce((a, b) => a + b, 0));
-                  const pf = ready ? (grossL > 0 ? grossW / grossL : grossW > 0 ? Infinity : 0) : null;
-                  const winRate = ready ? Math.round(wins.length / n * 100) : null;
-                  return (
-                    <div className="glass fade-up d1" style={{ padding: 16 }}>
-                      <SectionTitle accent="#a855f7" title="Historical Edge"
-                        right={<span className="eyebrow" style={{ fontSize: 9 }}>{ready ? `${n} samples · ${scope}` : `ENGINE PENDING · ${n}/${MIN} samples`}</span>} />
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(72px, 1fr))', gap: 10, alignItems: 'start' }}>
-                        <MiniRing value={winRate} size={66} color="#a5b4fc" label="Win" caption="any TP" />
-                        <MiniRing value={tp1R} size={66} color="#4ade80" label="TP1" caption="50% off" />
-                        <MiniRing value={tp2R} size={66} color="#22c55e" label="TP2" caption="2R target" />
-                        <MiniRing value={tp3R} size={66} color="#16a34a" label="TP3" caption="runner" />
-                        <div className="stat-tile" style={{ textAlign: 'center' }}>
-                          <div className="eyebrow" style={{ fontSize: 8 }}>Expectancy</div>
-                          <div className="mono" style={{ fontSize: 16, fontWeight: 800, marginTop: 4, color: expectancy === null ? 'var(--c-faintest)' : expectancy >= 0 ? '#4ade80' : '#f87171' }}>
-                            {expectancy === null ? '—' : `${expectancy >= 0 ? '+' : ''}${fmtUsd(expectancy)}`}
-                          </div>
-                          <div style={{ fontSize: 9, color: 'var(--c-faintest)' }}>per trade</div>
-                        </div>
-                        <div className="stat-tile" style={{ textAlign: 'center' }}>
-                          <div className="eyebrow" style={{ fontSize: 8 }}>Profit Factor</div>
-                          <div className="mono" style={{ fontSize: 16, fontWeight: 800, marginTop: 4, color: pf === null ? 'var(--c-faintest)' : pf >= 1.5 ? '#4ade80' : pf >= 1 ? '#fbbf24' : '#f87171' }}>
-                            {pf === null ? '—' : pf === Infinity ? '∞' : pf.toFixed(2)}
-                          </div>
-                          <div style={{ fontSize: 9, color: 'var(--c-faintest)' }}>gross W / L</div>
-                        </div>
-                      </div>
-                      {!ready && (
-                        <div style={{ marginTop: 12, position: 'relative', overflow: 'hidden', borderRadius: 8, padding: '8px 12px', background: 'var(--c-inner)', border: '1px dashed var(--c-border)', fontSize: 11, color: 'var(--c-dim)' }}>
-                          <div className="shimmer" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
-                          Probabilities unlock after {MIN} closed trades. Until then, treat Setup Quality as a ranking — not a win probability. Log every trade, including paper.
-                        </div>
-                      )}
-                    </div>
-                  );
+                  const closed = trades.filter(t => t.status !== 'open' && t.symbol === result.symbol && t.direction === result.direction);
+                  const realized = closed.length >= 10 ? (() => {
+                    const rs = closed.map(t => { const risk = Math.abs(t.entry - t.stopLoss) * (t.qty || 0); return risk > 0 ? (t.pnlDollars ?? 0) / risk : 0; });
+                    return { n: closed.length, expectancyR: rs.reduce((a, b) => a + b, 0) / rs.length, tp1Rate: closed.filter(t => t.tp1Hit || t.status === 'tp3').length / closed.length };
+                  })() : null;
+                  return <HistoricalEdgePanel ev={result.historicalEvidence} realized={realized} riskAmount={accountSize * riskPct / 100} />;
                 })()}
 
                 {/* ── BOTH DIRECTIONS SIGNAL COMPARISON ───────────── */}
@@ -2535,6 +2633,25 @@ export default function Home() {
                     {tradeResult.message && <div style={{ color: 'var(--c-subtle)', fontSize: 13, marginBottom: 6 }}>{tradeResult.message}</div>}
                     {tradeResult.error && <div style={{ color: '#ef4444', fontSize: 13 }}>{tradeResult.error}</div>}
                     {tradeResult.leverageWarning && <div style={{ color: '#eab308', fontSize: 12, marginBottom: 6 }}>{tradeResult.leverageWarning}</div>}
+                    {tradeResult.rejections?.map((w, i) => (
+                      <div key={`r${i}`} style={{ padding: '6px 10px', marginBottom: 6, borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5', fontSize: 11, fontWeight: 700 }}>⛔ HARD LIMIT · {w}</div>
+                    ))}
+                    {tradeResult.liveRefusedBecause && liveMode && (
+                      <div style={{ padding: '6px 10px', marginBottom: 6, borderRadius: 8, background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.35)', color: '#fbbf24', fontSize: 11 }}>
+                        Executed as PAPER — live refused: {tradeResult.liveRefusedBecause.join('; ')}
+                      </div>
+                    )}
+                    {manageState && manageState.tradeId === tradeResult.tradeId && (
+                      <div className="mono" style={{ padding: '6px 10px', marginBottom: 6, borderRadius: 8, background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(129,140,248,0.35)', color: '#c7d2fe', fontSize: 11 }}>
+                        STATE {manageState.state} · {manageState.note}
+                      </div>
+                    )}
+                    {tradeResult.actual && (
+                      <div className="mono" style={{ fontSize: 11, color: 'var(--c-muted)', marginBottom: 6 }}>
+                        Filled {tradeResult.actual.qty} @ {tradeResult.actual.avgPrice} · true risk ${tradeResult.actual.riskUsd.toFixed(2)} ({tradeResult.actual.riskVsTargetPct >= 0 ? '+' : ''}{tradeResult.actual.riskVsTargetPct.toFixed(1)}% vs target)
+                        {tradeResult.actual.liqPrice != null && <> · exchange liq {tradeResult.actual.liqPrice} ({tradeResult.actual.liqDistancePct?.toFixed(1)}% away, {tradeResult.actual.stopToLiqPct?.toFixed(1)}% beyond stop)</>}
+                      </div>
+                    )}
                     {tradeResult.warnings?.map((w, i) => (
                       <div key={i} style={{ padding: '6px 10px', marginBottom: 6, borderRadius: 8, background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.35)', color: '#fbbf24', fontSize: 11, fontWeight: 600 }}>⚠ {w}</div>
                     ))}
@@ -2792,7 +2909,7 @@ export default function Home() {
                         <button
                           onClick={() => setRadarExpanded(prev => {
                             const next = new Set(prev);
-                            next.has(sig.symbol) ? next.delete(sig.symbol) : next.add(sig.symbol);
+                            if (next.has(sig.symbol)) next.delete(sig.symbol); else next.add(sig.symbol);
                             return next;
                           })}
                           style={{
@@ -3936,6 +4053,38 @@ export default function Home() {
                 Keys are stored in your browser only — never sent to any server except Bybit directly over HTTPS.
                 On Bybit: Account → API Management → Create key with <strong style={{ color: 'var(--c-faint)' }}>Trade</strong> permission only. No withdrawal permission needed or wanted.
               </div>
+            </div>
+
+            {/* ── 2b. EXECUTION AUTHORISATION ───────────────── */}
+            <div className="glass" style={{ padding: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 8 }}>2b · EXECUTION AUTHORISATION</div>
+              <div style={{ fontSize: 11, color: 'var(--c-dim)', lineHeight: 1.6, marginBottom: 10 }}>
+                Live orders require three things at once: the server env <span className="mono">TRADING_MODE=live</span>, this token matching the server&apos;s <span className="mono">TRADE_AUTH_TOKEN</span>, and Live mode switched on below. Anything less executes as paper. Hard risk limits (1% risk, 3% daily loss, 5× leverage, 2 positions, 5 trades/day) are enforced server-side and cannot be overridden from here or by the AI.
+              </div>
+              <input type="password" value={execToken} onChange={e => setExecToken(e.target.value)} placeholder="Execution token (≥16 chars, matches TRADE_AUTH_TOKEN)"
+                style={{ width: '100%', padding: '10px 12px', background: 'var(--c-inner)', border: `1px solid ${execToken.length >= 16 ? '#22c55e33' : 'var(--c-border)'}`, borderRadius: 6, color: 'var(--c-text)', outline: 'none', fontSize: 13, boxSizing: 'border-box' }} />
+            </div>
+
+            {/* ── 2c. HISTORICAL EDGE ENGINE ────────────────── */}
+            <div className="glass" style={{ padding: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 12, color: 'var(--c-faint)', letterSpacing: '0.08em', marginBottom: 8 }}>2c · HISTORICAL EDGE ENGINE</div>
+              <div style={{ fontSize: 11, color: 'var(--c-dim)', lineHeight: 1.6, marginBottom: 10 }}>
+                Downloads Bybit history for a pair (1m·5m·15m·1h·4h·1d + funding), replays the live engine hour by hour with no look-ahead, and stores net-of-cost statistics. Needs the execution token and a server that can reach api.bybit.com. Large pairs take several minutes; re-run until it reports complete. Or run <span className="mono">npm run history:build -- {symbol}</span> locally.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button disabled={!!historyBuilding || execToken.length < 16} onClick={async () => {
+                  setHistoryBuilding(symbol); setHistoryMsg(null);
+                  try {
+                    const r = await fetch('/api/history/build', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-4scans-auth': execToken }, body: JSON.stringify({ symbol, backtest: true }) });
+                    const j = await r.json() as { ok?: boolean; error?: string; complete?: boolean; backtest?: { trades: number; longN: number; shortN: number; oosLongR: number; oosShortR: number }; sync?: { timeframe: string; count: number }[]; notes?: string[] };
+                    if (!j.ok) setHistoryMsg(`Failed: ${j.error}`);
+                    else setHistoryMsg(`${j.complete ? 'Complete' : 'Partial — run again'} · candles ${j.sync?.map(x => `${x.timeframe}:${x.count}`).join(' ')}${j.backtest ? ` · ${j.backtest.trades} replayed trades (L ${j.backtest.longN} / S ${j.backtest.shortN}) · OOS L ${j.backtest.oosLongR.toFixed(2)}R S ${j.backtest.oosShortR.toFixed(2)}R` : ''}${j.notes?.length ? ` · ${j.notes.join('; ')}` : ''}`);
+                  } catch (e) { setHistoryMsg(String(e)); } finally { setHistoryBuilding(null); }
+                }} style={{ padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(168,85,247,0.5)', background: 'rgba(168,85,247,0.16)', color: '#d8b4fe', fontWeight: 700, fontSize: 12, cursor: historyBuilding ? 'wait' : 'pointer' }}>
+                  {historyBuilding ? `Building ${historyBuilding}…` : `Build history for ${symbol}`}
+                </button>
+              </div>
+              {historyMsg && <div className="mono" style={{ marginTop: 8, fontSize: 10, color: 'var(--c-muted)', wordBreak: 'break-word' }}>{historyMsg}</div>}
             </div>
 
             {/* ── 3. ACCOUNT & RISK LIMITS ───────────────────── */}

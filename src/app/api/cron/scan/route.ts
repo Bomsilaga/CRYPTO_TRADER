@@ -29,6 +29,7 @@ import { fetchAllTickers, fetchKlines } from '@/lib/bybit';
 import { runEngine } from '@/lib/signalEngine';
 import { getAllSubscriptions } from '@/lib/subscriptions';
 import { setLastScan } from '@/lib/scanStore';
+import { authorizeCron } from '@/lib/auth';
 
 const MIN_VOLUME  = 5_000_000; // raised from 1M — better liquidity = tighter spreads
 const ALERT_SCORE = 80;
@@ -39,7 +40,9 @@ const TIME_BUDGET_MS = 8_500;  // abort scan if approaching timeout
 // BTC excluded by default — too volatile for rules-based stop placement
 const DEFAULT_BLACKLIST = new Set(['BTCUSDT']);
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
+  // Phase 25: only the platform cron (Authorization: Bearer $CRON_SECRET) may trigger scans + pushes.
+  if (!authorizeCron(req.headers)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   webpush.setVapidDetails(
     'mailto:' + (process.env.VAPID_EMAIL ?? 'admin@4scans.app'),
     process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? '',

@@ -29,3 +29,6 @@ tsconfig.tsbuildinfo
 boma-scan-fixed/
 .vercel
 .env*
+
+# Historical market data cache (file store)
+data/history/

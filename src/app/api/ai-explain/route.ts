@@ -1,160 +1,149 @@
+/**
+ * ai-explain/route.ts — AI verdict over STRUCTURED evidence.
+ * The server computes every number (historicalEvidence, riskModel, executionContext).
+ * The model interprets; it is instructed never to invent probabilities.
+ */
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
+import { computeRiskModel, type RiskModel } from '@/lib/risk/riskModel';
+import type { HistoricalEvidence, EvidenceBlock } from '@/lib/history/evidence';
+import { loadLimits } from '@/lib/risk/limits';
 
 type Provider = 'claude' | 'openai' | 'deepseek';
 
-const MAKER = 0.0002, TAKER = 0.00055, MMR = 0.005;
+const SYSTEM = `You are the head trader of a proprietary crypto futures desk, mentoring one trader who is going full-time on a small account. Two decades in leveraged markets. Calm, surgical, plain English. You think in R-multiples first and dollars second.
 
-const SYSTEM = `You are the head trader of a proprietary crypto futures desk. Two decades in leveraged markets — you have blown up an account once in your twenties and built an eight-figure track record since by never letting it happen again. You now mentor one trader who is going full-time on a small account, and you are speaking to them directly.
+Rules you never break:
+1. You do NOT calculate or invent probabilities, win rates, expectancies or dollar figures. Every number you use must appear verbatim in the STRUCTURED EVIDENCE you are given. If a number is missing, say "not available".
+2. Sample sizes and confidence intervals travel with every rate you quote. "INSUFFICIENT" or "VERY LOW EVIDENCE" samples cannot justify a trade.
+3. NEUTRAL bias = NO TRADE. You never manufacture a direction.
+4. The server's noTradeReasons are binding. If any exist, the verdict is NO TRADE unless the evidence you cite explicitly overrides them (it rarely will).
+5. Hard risk limits are enforced by the server; you do not negotiate them.
+6. No certainty language. Never: guaranteed, almost certain, easy, moon, massive opportunity, can't lose, free money.
+7. Out-of-sample evidence outranks in-sample. Closest-match evidence outranks pair-wide evidence only when its sample is at least LOW EVIDENCE.
+8. If the trader's realised journal diverges from the model, say so; never blend the two.
+9. Be concise. A desk note, not an essay.`;
 
-Your voice: calm, surgical, plain English. No hype, no hedging, no "it depends". You name the trade or you kill it. You think in R-multiples and dollars, never in percentages alone. You treat capital preservation as the only edge that compounds. You are allergic to fake precision — if the data does not support a claim, you say so.
+const pctCI = (r: { rate: number; hits: number; n: number; ci95: [number, number] }) => `${(r.rate * 100).toFixed(1)}% (${r.hits}/${r.n}; 95% CI ${(r.ci95[0] * 100).toFixed(1)}–${(r.ci95[1] * 100).toFixed(1)}%)`;
+const R = (x: number) => `${x >= 0 ? '+' : ''}${x.toFixed(2)}R`;
+const $ = (v: number) => `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`;
 
-Non-negotiable rules you enforce on your trader:
-1. Risk per trade is fixed by the stop. Leverage only changes margin. Never size up because a setup "feels" strong.
-2. No trade without 1h and 4h agreement unless the setup is a confirmed liquidity-sweep reversal with displacement.
-3. NEUTRAL bias = NO TRADE. Standing aside is a position.
-4. A setup with fewer than 3 confluences firing is a watchlist item, not a trade.
-5. If BTC is trending hard against the trade, the alt trade is at best half size.
-6. Never widen a stop. Never add to a loser. Always take TP1 (50%) and move the stop to breakeven.
-7. After the daily loss limit is hit, the terminal is closed for the day. No exceptions.
-8. If historical edge data is missing, say "unproven" — never invent win rates.
-
-You will be given the engine's read plus the trader's actual account numbers. Use THOSE dollar figures. Write like a desk note, not an essay. Every section short. Bold the verdict.`;
+function blockText(title: string, b?: EvidenceBlock): string {
+  if (!b) return `${title}: not available`;
+  return [
+    `${title} — n=${b.n} [${b.quality}]`,
+    `  TP1 before stop ${pctCI(b.tp1)} · TP2 ${pctCI(b.tp2)} · TP3 ${pctCI(b.tp3)} · stop-first ${pctCI(b.stopFirst)} · timeout ${(b.timeout.rate * 100).toFixed(1)}%`,
+    `  expectancy ${R(b.expectancyR)} · median ${R(b.medianR)} · profit factor ${b.profitFactor.toFixed(2)} · avg win ${R(b.avgWinR)} · avg loss ${R(b.avgLossR)}`,
+    `  avg MFE ${R(b.avgMfeR)} · avg MAE ${R(b.avgMaeR)} · max DD ${b.maxDrawdownR.toFixed(1)}R · max losing streak ${b.maxConsecutiveLosses} · avg hold ${b.avgHoldHours.toFixed(1)}h`,
+    b.warnings.length ? `  warnings: ${b.warnings.join(' | ')}` : '',
+  ].filter(Boolean).join('\n');
+}
 
 function buildPrompt(body: Record<string, unknown>): string {
   const b = body as {
-    symbol: string; price: number; direction: string; totalScore: number;
-    confidence: number; alignmentScore: number; alignmentQuality: string; bestSetup: string;
-    masterSignal: { entry: number; stopLoss: number; tp1: number; tp2: number; tp3: number; leverage: number; netRR: number };
-    deep: { hasBOS: boolean; hasOB: boolean; hasFVG: boolean; hasChoCH: boolean; hasSweep: boolean;
-            macdBull: boolean; macdBear: boolean; vwapAbove: boolean; volRatio: number; rsi: number; wyckoffPhase: string; amdBias?: string };
-    trendMap?: Record<string, string>;
-    avgMoves?: { daily: number; h8: number; h4: number };
-    account?: { accountSize?: number; riskPct?: number; leverage?: number; orderType?: string; dailyLossLimit?: number; dailyTarget?: number; maxTrades?: number; openTrades?: number };
-    edge?: { samples: number; tp1Rate?: number; tp2Rate?: number; tp3Rate?: number; expectancy?: number };
-    btcDirection?: string; btcScore?: number; btcConfidence?: number;
-    btcDeep?: { rsi: number; wyckoffPhase: string; macdBull: boolean; macdBear: boolean; vwapAbove: boolean; volRatio: number };
+    symbol: string; price: number; direction: 'LONG' | 'SHORT' | 'NEUTRAL'; totalScore: number; confidence: number; alignmentScore: number; alignmentQuality: string; bestSetup: string;
+    masterSignal: { entry: number; stopLoss: number; tp1: number; tp2: number; tp3: number; leverage: number; netRR: number; entryTiming?: string };
+    deep: { hasBOS: boolean; hasOB: boolean; hasFVG: boolean; hasChoCH: boolean; hasSweep: boolean; macdBull: boolean; macdBear: boolean; vwapAbove: boolean; volRatio: number; rsi: number; wyckoffPhase: string; amdBias?: string };
+    trendMap?: Record<string, string>; fundingRate?: number | null; avgMoves?: { daily: number; h8: number; h4: number };
+    features?: Record<string, unknown> | null;
+    historicalEvidence?: HistoricalEvidence | null;
+    account?: { accountSize?: number; riskPct?: number; leverage?: number; orderType?: 'Limit' | 'Market'; dailyLossLimit?: number; dailyTarget?: number; maxTrades?: number; openTrades?: number };
+    realized?: { n: number; expectancyR: number; tp1Rate: number } | null;
+    btcDirection?: string; btcScore?: number;
   };
-  const { symbol, direction, totalScore, confidence, alignmentScore, alignmentQuality, bestSetup, masterSignal: ms, deep, trendMap, avgMoves, edge, btcDirection, btcScore, btcDeep } = b;
-  const acct = {
-    size: b.account?.accountSize ?? 2000,
-    riskPct: b.account?.riskPct ?? 1,
-    lev: b.account?.leverage ?? ms.leverage ?? 3,
-    orderType: b.account?.orderType ?? 'Limit',
-    dailyLoss: b.account?.dailyLossLimit ?? 80,
-    dailyTarget: b.account?.dailyTarget ?? 100,
-    maxTrades: b.account?.maxTrades ?? 5,
-    open: b.account?.openTrades ?? 0,
-  };
-
+  const acct = { size: b.account?.accountSize ?? 2000, riskPct: b.account?.riskPct ?? 1, lev: b.account?.leverage ?? b.masterSignal.leverage ?? 3, orderType: b.account?.orderType ?? 'Limit', open: b.account?.openTrades ?? 0 };
+  const limits = loadLimits();
+  const isNeutral = b.direction === 'NEUTRAL';
+  const dir: 'LONG' | 'SHORT' = b.direction === 'NEUTRAL' ? 'LONG' : b.direction;
+  let rm: RiskModel | null = null;
+  try { rm = computeRiskModel({ capital: acct.size, riskPct: acct.riskPct, entry: b.masterSignal.entry, stopLoss: b.masterSignal.stopLoss, tp1: b.masterSignal.tp1, tp2: b.masterSignal.tp2, tp3: b.masterSignal.tp3, direction: dir, leverage: acct.lev, orderType: acct.orderType, fundingRate8h: b.fundingRate ?? null, expectedHoldHours: 8 }); } catch { rm = null; }
+  const ev = b.historicalEvidence;
   const f = (v: number) => v < 1 ? v.toFixed(6) : v < 100 ? v.toFixed(4) : v.toFixed(2);
-  const $ = (v: number) => `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`;
-  const isNeutral = direction === 'NEUTRAL';
-  const isLong = direction === 'LONG';
-  const entry = ms.entry;
-  const slDist = Math.abs(entry - ms.stopLoss);
-  const slPct = slDist / entry;
-  const riskAmt = acct.size * acct.riskPct / 100;
-  const qty = slDist > 0 ? riskAmt / slDist : 0;
-  const notional = qty * entry;
-  const margin = (lev: number) => notional / lev;
-  const entryFee = notional * (acct.orderType === 'Limit' ? MAKER : TAKER);
-  const net = (p: number, frac = 1) => (qty * frac * Math.abs(p - entry) * (((isLong && p > entry) || (!isLong && p < entry)) ? 1 : -1)) - entryFee * frac - qty * frac * p * TAKER;
-  const staged = net(ms.tp1, 0.5) + net(ms.tp2, 0.25) + net(ms.tp3, 0.25);
-  const liqDist = Math.max(0, 1 / acct.lev - MMR);
-  const liqPrice = isLong ? entry * (1 - liqDist) : entry * (1 + liqDist);
-  const maxSafeLev = Math.floor(1 / (slPct + MMR));
-  const r = (p: number) => (Math.abs(p - entry) / slDist).toFixed(2);
+  const tf = b.trendMap ? Object.entries(b.trendMap).map(([k, v]) => `${k}=${v}`).join(' | ') : 'n/a';
+  const conf = [b.deep.hasBOS && 'BOS', b.deep.hasChoCH && 'CHoCH', b.deep.hasOB && 'OB', b.deep.hasFVG && 'FVG', b.deep.hasSweep && 'sweep', (dir === 'LONG' ? b.deep.macdBull : b.deep.macdBear) && 'MACD aligned', (b.deep.vwapAbove === (dir === 'LONG')) && 'VWAP side', b.deep.volRatio >= 1.5 && `vol ${b.deep.volRatio.toFixed(1)}×`].filter(Boolean).join(', ') || 'none';
 
-  const conf = [
-    deep.hasBOS && 'BOS', deep.hasChoCH && 'CHoCH', deep.hasOB && 'Order Block', deep.hasFVG && 'FVG', deep.hasSweep && 'Liquidity sweep',
-    (isLong ? deep.macdBull : deep.macdBear) && 'MACD aligned',
-    (deep.vwapAbove === isLong && !isNeutral) && 'VWAP side',
-    deep.volRatio >= 1.5 && `Volume ${deep.volRatio.toFixed(1)}×`,
-  ].filter(Boolean) as string[];
+  const evidenceText = !ev ? 'HISTORICAL EVIDENCE: not available (no replay for this pair).'
+    : !ev.available ? `HISTORICAL EVIDENCE: not available — ${ev.reason}`
+    : [
+      `HISTORICAL EVIDENCE (independent exchange-data replay, ${ev.executionProfile} execution, net of fees/slippage/funding; built ${ev.builtAt?.slice(0, 10)}; ${ev.decisions} hourly decisions, ${ev.neutralDecisions} neutral)`,
+      `Sample quality scale: ${ev.sampleQualityScale}`,
+      blockText('A. PAIR-WIDE', ev.pairWide),
+      blockText(`B. CURRENT REGIME ${ev.regime?.regimeKey ?? ''} (${((ev.regime?.regimeShareOfPair ?? 0) * 100).toFixed(0)}% of pair setups${ev.regime?.rare ? ', RARE' : ''})`, ev.regime),
+      blockText(`C. CLOSEST MATCHES (k=${ev.similarSetups?.k ?? 0}, avg distance ${ev.similarSetups?.avgDistance.toFixed(2) ?? 'n/a'})`, ev.similarSetups),
+      blockText(`D. OUT-OF-SAMPLE (${ev.outOfSample?.method ?? ''}; ${ev.outOfSample?.folds ?? 0} folds, ${ev.outOfSample?.foldsPositive ?? 0} positive; in-sample ${R(ev.outOfSample?.inSampleExpectancyR ?? 0)} n=${ev.outOfSample?.inSampleN ?? 0}; degradation ${R(ev.outOfSample?.degradationR ?? 0)})`, ev.outOfSample),
+      `E. BTC CONTEXT TEST: ${ev.btcSplit?.note ?? 'n/a'} — BTC is currently ${ev.btcSplit?.alignedNow ?? 'UNKNOWN'} relative to this trade.`,
+      `F. RECENT EDGE: ${ev.decay?.status} — ${ev.decay?.note} (last20 ${R(ev.decay?.last20ExpectancyR ?? 0)}, last50 ${R(ev.decay?.last50ExpectancyR ?? 0)} n=${ev.decay?.last50N ?? 0}, last90d ${R(ev.decay?.last90dExpectancyR ?? 0)}, long-term ${R(ev.decay?.longTermExpectancyR ?? 0)})`,
+      ev.warnings.length ? `WARNINGS: ${ev.warnings.join(' | ')}` : 'WARNINGS: none',
+      ev.noTradeReasons.length ? `SERVER NO-TRADE REASONS (binding): ${ev.noTradeReasons.join(' | ')}` : 'SERVER NO-TRADE REASONS: none',
+    ].join('\n');
 
-  const tf = trendMap ? Object.entries(trendMap).map(([k, v]) => `${k}=${v}`).join(' | ') : 'n/a';
+  const riskText = !rm ? 'RISK MODEL: not computable' : [
+    `RISK MODEL (deterministic; ${acct.orderType} entry, taker stop, maker targets, ${rm.slippage.entry > 0 ? '5bps' : '0'} entry slippage)`,
+    `Capital ${$(rm.capital)} · risk ${rm.riskPct}% = ${$(rm.riskAmount)} · stop distance ${(rm.stopDistancePct * 100).toFixed(2)}% · qty ${rm.qty.toFixed(4)} · notional ${$(rm.notional)}`,
+    `Margin @${rm.leverage}× ${$(rm.margin.atLeverage)} · @2× ${$(rm.margin.x2)} · @3× ${$(rm.margin.x3)} · @5× ${$(rm.margin.x5)}`,
+    `Liquidation (estimate) ${f(rm.liquidation.price)} · ${rm.liquidation.distancePct.toFixed(2)}% from entry · buffer beyond stop ${rm.liquidation.stopToLiqPct.toFixed(2)}% · ${rm.liquidation.safe ? 'SAFE' : 'TOO CLOSE'} · max safe leverage ${rm.liquidation.maxSafeLeverage}×`,
+    `Fees: entry ${$(rm.fees.entry)} · stop exit ${$(rm.fees.stopExit)} · TP exits ${$(rm.fees.tp1Exit)}/${$(rm.fees.tp2Exit)}/${$(rm.fees.tp3Exit)} · slippage if stopped ${$(rm.slippage.totalIfStopped)} · funding est ${$(rm.funding.estimate)} (${rm.funding.rate8h == null ? 'n/a' : (rm.funding.rate8h * 100).toFixed(4) + '%/8h'})`,
+    `NET: stop ${$(rm.net.stop)} · TP1 full ${$(rm.net.tp1Full)} · TP2 full ${$(rm.net.tp2Full)} · TP3 full ${$(rm.net.tp3Full)} · staged 50/25/25 ${$(rm.net.staged)} (${R(rm.net.stagedR)})`,
+    `R multiples: TP1 ${rm.rMultiples.tp1.toFixed(2)}R · TP2 ${rm.rMultiples.tp2.toFixed(2)}R · TP3 ${rm.rMultiples.tp3.toFixed(2)}R`,
+    rm.warnings.length ? `risk warnings: ${rm.warnings.join(' | ')}` : '',
+  ].filter(Boolean).join('\n');
 
-  const edgeLine = edge && edge.samples >= 5 && edge.tp1Rate !== undefined
-    ? `Trader's own journal (${edge.samples} closed): TP1 ${edge.tp1Rate}% · TP2 ${edge.tp2Rate}% · TP3 ${edge.tp3Rate}% · expectancy ${$(edge.expectancy ?? 0)}/trade`
-    : `Trader's own journal: only ${edge?.samples ?? 0} closed trades — edge is UNPROVEN. Say so.`;
+  const realizedText = b.realized && b.realized.n >= 10
+    ? `TRADER'S REALISED JOURNAL (secondary, never blended): n=${b.realized.n} · expectancy ${R(b.realized.expectancyR)} · TP1 ${(b.realized.tp1Rate * 100).toFixed(0)}%`
+    : `TRADER'S REALISED JOURNAL: fewer than 10 closed trades — unproven.`;
 
-  const btcSection = btcDirection && btcDeep ? `
-BTC TAPE: ${btcDirection} (score ${btcScore}) · RSI ${btcDeep.rsi.toFixed(0)} · ${btcDeep.wyckoffPhase} · MACD ${btcDeep.macdBull ? 'bull' : btcDeep.macdBear ? 'bear' : 'flat'} · ${btcDeep.vwapAbove ? 'above' : 'below'} VWAP · vol ${btcDeep.volRatio.toFixed(1)}×
-BTC vs this trade: ${!btcDirection || btcDirection === 'NEUTRAL' || btcDirection === direction ? 'aligned / not opposing' : '⚠ OPPOSING — alt trade is fighting the index'}` : '\nBTC TAPE: unavailable';
+  return `PAIR: ${b.symbol} PERP @ $${f(b.price)}
+ENGINE: bias ${b.direction}${isNeutral ? ' (NO TRADE by rule)' : ''} · Setup Quality ${b.totalScore}/100 (heuristic ranking, NOT a probability) · style ${b.bestSetup} · entry timing ${b.masterSignal.entryTiming ?? 'n/a'}
+Timeframes: ${tf} · alignment ${b.alignmentScore}% (${b.alignmentQuality})
+Confluences: ${conf} · RSI ${b.deep.rsi.toFixed(1)} · Wyckoff ${b.deep.wyckoffPhase} · AMD ${b.deep.amdBias ?? 'n/a'} · funding ${b.fundingRate == null ? 'n/a' : (b.fundingRate * 100).toFixed(4) + '%'}
+${b.avgMoves ? `Typical range: 4h ±${b.avgMoves.h4.toFixed(2)}% · 8h ±${b.avgMoves.h8.toFixed(2)}% · day ±${b.avgMoves.daily.toFixed(2)}%` : ''}
+LEVELS (${isNeutral ? 'display only' : dir}): entry $${f(b.masterSignal.entry)} · stop $${f(b.masterSignal.stopLoss)} · TP1 $${f(b.masterSignal.tp1)} · TP2 $${f(b.masterSignal.tp2)} · TP3 $${f(b.masterSignal.tp3)}
+BTC: ${b.btcDirection ?? 'n/a'} (score ${b.btcScore ?? 'n/a'})
+EXECUTION CONTEXT: hard limits — max risk ${limits.maxRiskPctPerTrade}%/trade, daily loss ${limits.maxDailyLossPct}%, max leverage ${limits.maxLeverage}×, max ${limits.maxConcurrentPositions} positions, ${limits.maxTradesPerDay} trades/day; open positions now ${acct.open}.
 
-  return `DESK CARD — ${symbol} PERP @ $${f(entry)}
+${evidenceText}
 
-ENGINE READ
-Bias: ${isNeutral ? 'NEUTRAL → NO TRADE by rule' : direction} · Setup Quality ${totalScore}/100 · Confidence ${confidence}% · Style ${bestSetup}
-Timeframes: ${tf}
-Alignment: ${alignmentScore}% (${alignmentQuality})
-Confluences firing (${conf.length}/8): ${conf.length ? conf.join(', ') : 'none'}
-RSI ${deep.rsi.toFixed(1)} · Wyckoff ${deep.wyckoffPhase} · AMD ${deep.amdBias ?? 'n/a'}
-${avgMoves ? `Typical range: 4h ±${avgMoves.h4.toFixed(2)}% · 8h ±${avgMoves.h8.toFixed(2)}% · day ±${avgMoves.daily.toFixed(2)}%` : ''}
+${riskText}
 
-LEVELS (${isNeutral ? 'display only — no trade' : direction})
-Entry $${f(entry)} · Stop $${f(ms.stopLoss)} (${(slPct * 100).toFixed(2)}% · 1R)
-TP1 $${f(ms.tp1)} (${r(ms.tp1)}R · 50%) · TP2 $${f(ms.tp2)} (${r(ms.tp2)}R · 25%) · TP3 $${f(ms.tp3)} (${r(ms.tp3)}R · 25%) · Net R:R ${ms.netRR}×
+${realizedText}
 
-TRADER'S ACCOUNT (use these exact numbers)
-Capital ${$(acct.size)} · Risk ${acct.riskPct}% = ${$(riskAmt)} per trade · Daily loss limit ${$(acct.dailyLoss)} · Daily target ${$(acct.dailyTarget)} · Max ${acct.maxTrades} trades/day · Open now: ${acct.open}
-Position: ${qty.toFixed(4)} ${symbol.replace('USDT', '')} = ${$(notional)} notional
-Margin: ${$(margin(acct.lev))} @${acct.lev}× (your setting) · ${$(margin(3))} @3× · ${$(margin(5))} @5×
-Liquidation @${acct.lev}×: $${f(liqPrice)} (${(liqDist * 100).toFixed(1)}% away) · max safe leverage for this stop: ${maxSafeLev}×
-After fees (${acct.orderType} in, taker out): stop = ${$(net(ms.stopLoss))} · TP1 full = ${$(net(ms.tp1))} · TP2 full = ${$(net(ms.tp2))} · TP3 full = ${$(net(ms.tp3))}
-Staged 50/25/25 to all targets = ${$(staged)} (${slDist > 0 ? (staged / riskAmt).toFixed(2) : '0'}R net)
-${edgeLine}
-${btcSection}
+Write the desk note in EXACTLY this structure (plain text headings, no markdown tables):
 
-Write the desk note in exactly these sections:
-
-**DESK READ** — 3 lines max. What the tape is actually doing on this pair and why the engine leans the way it does.
-
-**THE TRADE** — ${isNeutral ? 'State NO TRADE and the single condition that would change that.' : `${direction} or NO TRADE. If trade: trigger candle to wait for, exact entry zone, stop, and why the stop is where it is.`}
-
-**SIZING — IN DOLLARS** — Restate risk ${$(riskAmt)}, notional, margin at ${acct.lev}×, and net dollars at stop / TP1 / TP2 / staged plan. If the engine leverage differs from ${acct.lev}×, say which to use and why.
-
-**MANAGEMENT** — What to do at TP1 (stop to BE), at TP2, and the runner. Time stop: if TP1 isn't hit within the typical 8h range, what then.
-
-**WHAT KILLS IT** — 3 exact price levels or candle closes that invalidate the idea before the stop.
-
-**BTC TAPE** — one paragraph, how BTC changes size or timing here.
-
-**EDGE CHECK** — Is this trader's own track record good enough to run this at full size? Use the journal numbers; if unproven, say paper or quarter size.
-
-**VERDICT** — One bold line: EXECUTE / CONDITIONAL / WATCHLIST / NO TRADE, direction, size (full / half / quarter / paper), and the one thing that matters most.`;
+PAIR: ${b.symbol}
+BIAS: LONG / SHORT / NO TRADE
+ENTRY STATUS: ENTER / WAIT FOR PULLBACK / WAIT FOR RETEST / NO TRADE
+HISTORICAL EVIDENCE:
+  (quote closest-match n, TP1 with 95% CI, TP2, TP3, OOS expectancy, profit factor, max losing streak — numbers verbatim from above, or "not available")
+REGIME:
+  (current regime key, regime n, regime expectancy)
+TRADE:
+  Entry / Stop / TP1 / TP2 / TP3
+ACCOUNT:
+  Capital / Risk / Notional / Margin @3x / Margin @5x
+NET PNL:
+  Stop / TP1 / TP2 / TP3 / Staged
+TRADER'S VERDICT:
+  2–5 concise paragraphs. Weigh out-of-sample first, then closest matches, then regime, then pair-wide. State size: full / half / quarter / paper / none. Mention the BTC test result and recent-edge status explicitly.
+INVALIDATION:
+  Exact price level or candle close that kills the setup.
+DO NOT TRADE IF:
+  Specific, checkable conditions.`;
 }
 
-async function callClaude(prompt: string, apiKey: string): Promise<string> {
+async function callClaude(prompt: string, apiKey: string) {
   const client = new Anthropic({ apiKey });
-  const msg = await client.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 1400,
-    system: SYSTEM,
-    messages: [{ role: 'user', content: prompt }],
-  });
+  const msg = await client.messages.create({ model: 'claude-sonnet-4-5', max_tokens: 1600, system: SYSTEM, messages: [{ role: 'user', content: prompt }] });
   return (msg.content[0] as { type: string; text: string }).text;
 }
-
-async function callOpenAI(prompt: string, apiKey: string): Promise<string> {
+async function callOpenAI(prompt: string, apiKey: string) {
   const client = new OpenAI({ apiKey });
-  const res = await client.chat.completions.create({
-    model: 'gpt-4o',
-    max_tokens: 1400,
-    messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }],
-  });
+  const res = await client.chat.completions.create({ model: 'gpt-4o', max_tokens: 1600, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }] });
   return res.choices[0]?.message?.content ?? '';
 }
-
-async function callDeepSeek(prompt: string, apiKey: string): Promise<string> {
+async function callDeepSeek(prompt: string, apiKey: string) {
   const client = new OpenAI({ apiKey, baseURL: 'https://api.deepseek.com' });
-  const res = await client.chat.completions.create({
-    model: 'deepseek-chat',
-    max_tokens: 1400,
-    messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }],
-  });
+  const res = await client.chat.completions.create({ model: 'deepseek-chat', max_tokens: 1600, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }] });
   return res.choices[0]?.message?.content ?? '';
 }
 
@@ -162,31 +151,19 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const provider: Provider = body.provider ?? 'claude';
-
     const clientKey: string | undefined = body.clientApiKey;
-    const envKeyMap: Record<Provider, string | undefined> = {
-      claude:   process.env.ANTHROPIC_API_KEY,
-      openai:   process.env.OPENAI_API_KEY,
-      deepseek: process.env.DEEPSEEK_API_KEY,
-    };
+    const envKeyMap: Record<Provider, string | undefined> = { claude: process.env.ANTHROPIC_API_KEY, openai: process.env.OPENAI_API_KEY, deepseek: process.env.DEEPSEEK_API_KEY };
     const resolvedKey = clientKey || envKeyMap[provider];
-
     if (!resolvedKey) {
       const envVarName = provider === 'claude' ? 'ANTHROPIC_API_KEY' : provider === 'openai' ? 'OPENAI_API_KEY' : 'DEEPSEEK_API_KEY';
-      return NextResponse.json({
-        error: `No API key for ${provider}. Paste your ${envVarName} in Settings → AI Analysis Provider.`,
-      }, { status: 400 });
+      return NextResponse.json({ error: `No API key for ${provider}. Paste your ${envVarName} in Settings → AI Analysis Provider.` }, { status: 400 });
     }
-
     const prompt = buildPrompt(body);
-
     let explanation = '';
-    if (provider === 'claude')   explanation = await callClaude(prompt, resolvedKey);
-    if (provider === 'openai')   explanation = await callOpenAI(prompt, resolvedKey);
+    if (provider === 'claude') explanation = await callClaude(prompt, resolvedKey);
+    if (provider === 'openai') explanation = await callOpenAI(prompt, resolvedKey);
     if (provider === 'deepseek') explanation = await callDeepSeek(prompt, resolvedKey);
-
     return NextResponse.json({ explanation, provider });
-
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
